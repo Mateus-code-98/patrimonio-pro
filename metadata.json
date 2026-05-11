@@ -1,0 +1,6 @@
+{
+  "name": "Patrimônio Pro",
+  "description": "App de gestão de patrimônio com suporte a múltiplos relatórios mensais, projeções de rendimento Selic e acompanhamento de OKRs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
