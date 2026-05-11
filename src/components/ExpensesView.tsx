@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Transaction, Category, Source, Supplier, Card } from '../types';
 import { CustomSelect } from './CustomSelect';
-import { Calendar, Filter, ListFilter, X } from 'lucide-react';
+import { Calendar, ChevronLeft, Filter, ListFilter, X } from 'lucide-react';
 
 const COLORS = ['#10b981', '#f43f5e', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899'];
 
@@ -18,52 +18,75 @@ export const ExpensesView = ({
     categories,
     sources,
     suppliers,
-    cards
+    cards,
+    month,
+    year,
+    onBack,
 }: {
     transactions: Transaction[];
     categories: Category[];
     sources: Source[];
     suppliers: Supplier[];
     cards: Card[];
+    month: number;
+    year: number;
+    onBack: () => void;
 }) => {
-    const [filterCategory, setFilterCategory] = useState<string>("all");
-    const [filterSource, setFilterSource] = useState<string>("all");
-    const [filterSupplier, setFilterSupplier] = useState<string>("all");
-    const [filterCard, setFilterCard] = useState<string>("all");
-    const [filterMandatory, setFilterMandatory] = useState<string>("all");
+    const [filterCategory, setFilterCategory] = useState<string | null>(null);
+    const [filterSource, setFilterSource] = useState<string | null>(null);
+    const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
+    const [filterCard, setFilterCard] = useState<string | null>(null);
+    const [filterMandatory, setFilterMandatory] = useState<string | null>(null);
     const [startDate, setStartDate] = useState<string>("");
     const [endDate, setEndDate] = useState<string>("");
     const [showFilterModal, setShowFilterModal] = useState(false);
+
+    const TYPE_LABELS: Record<string, string> = {
+        'mandatory': 'Obrigatório (Recorrente)',
+        'non_recurring_mandatory': 'Obrigatório (Não recorrente)',
+        'discretionary': 'Discricionário'
+    };
+
+    const MONTH_NAMES = [
+        "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+    ];
+
     const activeFilters = useMemo(() => {
         const filters = [];
-        if (filterCategory !== 'all') filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory('all') });
-        if (filterSource !== 'all') filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource('all') });
-        if (filterSupplier !== 'all') filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier('all') });
-        if (filterCard !== 'all') filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard('all') });
-        if (filterMandatory !== 'all') filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: filterMandatory === 'mandatory' ? 'Obrigatório' : 'Discricionário', clear: () => setFilterMandatory('all') });
+        if (filterCategory) filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory(null) });
+        if (filterSource) filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource(null) });
+        if (filterSupplier) filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier(null) });
+        if (filterCard) filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard(null) });
+        if (filterMandatory) filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: TYPE_LABELS[filterMandatory], clear: () => setFilterMandatory(null) });
         if (startDate) filters.push({ id: 'startDate', type: 'Início', value: startDate, clear: () => setStartDate('') });
         if (endDate) filters.push({ id: 'endDate', type: 'Fim', value: endDate, clear: () => setEndDate('') });
         return filters;
     }, [filterCategory, filterSource, filterSupplier, filterCard, filterMandatory, startDate, endDate, categories, sources, suppliers, cards]);
 
     const clearFilters = () => {
-        setFilterCategory("all");
-        setFilterSource("all");
-        setFilterSupplier("all");
-        setFilterCard("all");
-        setFilterMandatory("all");
+        setFilterCategory(null);
+        setFilterSource(null);
+        setFilterSupplier(null);
+        setFilterCard(null);
+        setFilterMandatory(null);
         setStartDate("");
         setEndDate("");
     };
 
     const filtered = useMemo(() => {
         return transactions.filter(t => {
-            if (filterCategory !== "all" && (t.category_id !== filterCategory)) return false;
-            if (filterSource !== "all" && t.source_id !== filterSource) return false;
-            if (filterSupplier !== "all" && t.supplier_id !== filterSupplier) return false;
-            if (filterCard !== "all" && t.card_id !== filterCard) return false;
-            if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
-            if (filterMandatory === 'discretionary' && t.is_mandatory) return false;
+            if (filterCategory && (t.category_id !== filterCategory)) return false;
+            if (filterSource && t.source_id !== filterSource) return false;
+            if (filterSupplier && t.supplier_id !== filterSupplier) return false;
+            if (filterCard && t.card_id !== filterCard) return false;
+
+            if (filterMandatory) {
+                if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
+                if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
+                if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
+            }
+
             if (startDate && t.date < startDate) return false;
             if (endDate && t.date > endDate) return false;
             return true;
@@ -76,57 +99,71 @@ export const ExpensesView = ({
         return { income, expense };
     }, [filtered]);
 
-    const getRanked = (key: 'category_id' | 'source_id' | 'supplier_id', items: any[]) => {
+    const getRanked = (key: 'category_id' | 'source_id' | 'supplier_id' | 'type', items: any[]) => {
         const data: Record<string, number> = {};
         filtered.filter(t => t.type === 'expense').forEach(t => {
-            const id = t[key];
-            const name = items.find(i => i.id === id)?.name || "Outros";
+            let name = "Outros";
+            if (key === 'type') {
+                if (t.is_mandatory) name = "Obrigatório (Recorrente)";
+                else if (t.is_non_recurring_mandatory) name = "Obrigatório (Não recorrente)";
+                else name = "Discricionário";
+            } else {
+                const id = t[key];
+                name = items.find(i => i.id === id)?.name || "Outros";
+            }
             data[name] = (data[name] || 0) + t.value;
         });
         return Object.entries(data).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
     };
 
     const renderRankList = (data: any[], title: string) => (
-        <div className="bg-zinc-800 p-4 rounded-xl space-y-3">
-            <h3 className="text-sm font-bold text-zinc-300">{title}</h3>
-            {data.map((item, index) => (
-                <div key={index} className="flex justify-between items-center text-xs">
-                    <span className="text-zinc-400">{item.name}</span>
-                    <span className="font-mono text-rose-400">{formatCurrency(item.value)}</span>
-                </div>
-            ))}
+        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: "calc(100vh - 315px)" }}>
+            <h3 className="text-sm font-bold text-zinc-300 mb-3 flex-shrink-0">{title}</h3>
+            <div className="space-y-3 overflow-y-auto pr-2 flex-1">
+                {data.map((item, index) => (
+                    <div key={index} className="flex justify-between items-center text-xs">
+                        <span className="text-zinc-400">{item.name}</span>
+                        <span className="font-mono text-rose-400">{formatCurrency(item.value)}</span>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 
     return (
-        <div className="flex-1 flex flex-col h-full bg-zinc-950">
-            <div className="px-6 pt-6 pb-2 sticky top-0 z-10 bg-zinc-950">
+        <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl min-h-0 relative">
+            <div className="p-4 flex items-center justify-between gap-4 border-b border-zinc-800 flex-shrink-0">
+                <button
+                    onClick={onBack}
+                    className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-tight"
+                >
+                    <ChevronLeft className="w-4 h-4" /> Voltar
+                </button>
+                <div className="flex items-center gap-2">
+                    <div className="bg-zinc-800 border border-zinc-700 px-4 py-2 rounded-lg flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-zinc-500" />
+                        <span className="text-xs font-bold text-zinc-200 uppercase tracking-tight">{MONTH_NAMES[month]} {year}</span>
+                    </div>
+                    <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all">
+                        <Filter className="w-4 h-4" /> Filtrar {activeFilters.length > 0 && <span className="bg-emerald-500 text-emerald-950 px-1.5 py-0.5 rounded text-[10px]">{activeFilters.length}</span>}
+                    </button>
+                </div>
+            </div>
+
+            <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10 flex-shrink-0">
                 <div className="flex items-center justify-between gap-4 mb-4">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4" style={{ justifyContent: 'space-between', width: '100%' }}>
                         <h2 className="text-lg font-black tracking-tighter text-white uppercase flex items-center gap-2">
                             <ListFilter className="w-5 h-5 text-zinc-500" />
                             Despesas
                         </h2>
                         <div className="bg-zinc-800 border border-zinc-700 p-2 rounded-xl shadow-lg flex items-center gap-6">
                             <div className="flex items-center gap-2">
-                                <p className="text-[9px] text-zinc-400 uppercase font-bold">Receitas</p>
-                                <p className="text-sm font-mono font-bold text-emerald-400">{formatCurrency(totals.income)}</p>
-                            </div>
-                            <div className="w-px h-4 bg-zinc-700"></div>
-                            <div className="flex items-center gap-2">
-                                <p className="text-[9px] text-zinc-400 uppercase font-bold">Despesas</p>
+                                <p className="text-[9px] text-zinc-400 uppercase font-bold">Total</p>
                                 <p className="text-sm font-mono font-bold text-rose-400">{formatCurrency(totals.expense)}</p>
-                            </div>
-                            <div className="w-px h-4 bg-zinc-700"></div>
-                            <div className="flex items-center gap-2">
-                                <p className="text-[9px] text-zinc-400 uppercase font-bold">Saldo</p>
-                                <p className={`text-sm font-mono font-bold ${totals.income - totals.expense >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{formatCurrency(totals.income - totals.expense)}</p>
                             </div>
                         </div>
                     </div>
-                    <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all">
-                        <Filter className="w-4 h-4" /> Filtrar {activeFilters.length > 0 && <span className="bg-emerald-500 text-emerald-950 px-1.5 py-0.5 rounded text-[10px]">{activeFilters.length}</span>}
-                    </button>
                 </div>
 
                 {activeFilters.length > 0 && (
@@ -147,23 +184,33 @@ export const ExpensesView = ({
                 )}
             </div>
 
+
             {showFilterModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                    <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-6 shadow-2xl space-y-6">
+                    <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-6 shadow-2xl space-y-6 relative">
+                        <button onClick={() => setShowFilterModal(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors">
+                            <X className="w-5 h-5" />
+                        </button>
                         <h3 className="text-lg font-black uppercase tracking-tighter text-white">Filtros de Despesas</h3>
                         <div className="grid grid-cols-1 gap-4">
-                            <CustomSelect label="Categoria" value={filterCategory} onChange={setFilterCategory} options={[{ value: 'all', label: 'Todas' }, ...categories.map(c => ({ value: c.id, label: c.name }))]} />
-                            <CustomSelect label="Fonte" value={filterSource} onChange={setFilterSource} options={[{ value: 'all', label: 'Todas' }, ...sources.map(c => ({ value: c.id, label: c.name }))]} />
-                            <CustomSelect label="Fornecedor" value={filterSupplier} onChange={setFilterSupplier} options={[{ value: 'all', label: 'Todas' }, ...suppliers.map(c => ({ value: c.id, label: c.name }))]} />
-                            <CustomSelect label="Cartão" value={filterCard} onChange={setFilterCard} options={[{ value: 'all', label: 'Todos' }, ...cards.map(c => ({ value: c.id, label: c.name }))]} />
-                            <CustomSelect label="Tipo de Gasto" value={filterMandatory} onChange={setFilterMandatory} options={[{ value: 'all', label: 'Todos' }, { value: 'mandatory', label: 'Obrigatório' }, { value: 'discretionary', label: 'Discricionário' }]} />
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Início</label>
-                                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none" />
-                            </div>
-                            <div className="flex flex-col gap-1">
-                                <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Fim</label>
-                                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none" />
+                            <CustomSelect label="Categoria" value={filterCategory} onChange={setFilterCategory} options={categories.map(c => ({ value: c.id, label: c.name }))} />
+                            <CustomSelect label="Fonte" value={filterSource} onChange={setFilterSource} options={sources.map(c => ({ value: c.id, label: c.name }))} />
+                            <CustomSelect label="Fornecedor" value={filterSupplier} onChange={setFilterSupplier} options={suppliers.map(c => ({ value: c.id, label: c.name }))} />
+                            <CustomSelect label="Cartão" value={filterCard} onChange={setFilterCard} options={cards.map(c => ({ value: c.id, label: c.name }))} />
+                            <CustomSelect label="Tipo de Gasto" value={filterMandatory} onChange={setFilterMandatory} options={[
+                                { value: 'mandatory', label: 'Obrigatório (Recorrente)' },
+                                { value: 'non_recurring_mandatory', label: 'Obrigatório (Não recorrente)' },
+                                { value: 'discretionary', label: 'Discricionário' }
+                            ]} />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Início</label>
+                                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none" />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Fim</label>
+                                    <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none" />
+                                </div>
                             </div>
                         </div>
                         <div className="flex justify-between gap-3 pt-4 border-t border-zinc-800/50">
@@ -174,13 +221,15 @@ export const ExpensesView = ({
                 </div>
             )}
 
-            <div className="flex-1 overflow-y-auto px-6 pb-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
+            <div className="flex-1 px-6 pb-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-4" style={{ height: "100%" }}>
                     {renderRankList(getRanked('category_id', categories), "Rank por Categoria")}
                     {renderRankList(getRanked('source_id', sources), "Rank por Fonte")}
                     {renderRankList(getRanked('supplier_id', suppliers), "Rank por Fornecedor")}
+                    {renderRankList(getRanked('type', []), "Rank por Tipo")}
                 </div>
             </div>
         </div>
     );
+
 }

@@ -84,6 +84,7 @@ db.exec(`
     card_id TEXT,
     date TEXT NOT NULL,
     is_mandatory INTEGER DEFAULT 0,
+    is_non_recurring_mandatory INTEGER DEFAULT 0,
     FOREIGN KEY (report_id) REFERENCES reports(id) ON DELETE CASCADE,
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
     FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE RESTRICT
@@ -152,6 +153,17 @@ try {
     console.log("card_id already exists in transactions");
   } else {
     console.error("Migration error (transactions card_id):", e.message);
+  }
+}
+
+try {
+  db.prepare("ALTER TABLE transactions ADD COLUMN is_non_recurring_mandatory INTEGER DEFAULT 0").run();
+  console.log("Successfully added is_non_recurring_mandatory to transactions");
+} catch (e: any) {
+  if (e.message.includes("duplicate column name")) {
+    console.log("is_non_recurring_mandatory already exists in transactions");
+  } else {
+    console.error("Migration error (transactions is_non_recurring_mandatory):", e.message);
   }
 }
 
@@ -620,14 +632,14 @@ Responda APENAS com um JSON no formato:
   });
 
   app.post("/api/transactions", (req, res) => {
-    const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, supplier_id, card_id } = req.body;
+    const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, is_non_recurring_mandatory, supplier_id, card_id } = req.body;
     const id = uuidv4();
     let finalCatId = category_id;
     if (!finalCatId && categories && categories.length > 0) finalCatId = categories[0];
 
     const insert = db.transaction(() => {
-      db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, supplier_id, card_id, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, supplier_id, card_id || null, finalCatId);
+      db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_non_recurring_mandatory, supplier_id, card_id, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, is_non_recurring_mandatory ? 1 : 0, supplier_id, card_id || null, finalCatId);
     });
 
     try {
@@ -661,7 +673,7 @@ Responda APENAS com um JSON no formato:
         const suppliers = db.prepare("SELECT * FROM suppliers").all() as any[];
 
         for (const t of transactions) {
-          const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, alias, supplier_id, card_id } = t;
+          const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, is_non_recurring_mandatory, alias, supplier_id, card_id } = t;
           const id = uuidv4();
 
           let finalCatId = category_id;
@@ -707,8 +719,8 @@ Responda APENAS com um JSON no formato:
           }
 
           // Insert transaction
-          db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, supplier_id, card_id, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-            .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, finalSupplierId, card_id || null, finalCatId);
+          db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_non_recurring_mandatory, supplier_id, card_id, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, is_non_recurring_mandatory ? 1 : 0, finalSupplierId, card_id || null, finalCatId);
         }
       });
 
@@ -1122,16 +1134,16 @@ Retorne o JSON com os campos adicionais 'installments_count' (inteiro, padrão 1
   });
 
   app.put("/api/transactions/:id", (req, res) => {
-    const { value, source_id, date, categories, category_id, is_mandatory, supplier_id, card_id } = req.body;
+    const { value, source_id, date, categories, category_id, is_mandatory, is_non_recurring_mandatory, supplier_id, card_id } = req.body;
     let finalCatId = category_id;
     if (!finalCatId && categories && categories.length > 0) finalCatId = categories[0];
 
     const update = db.transaction(() => {
       db.prepare(`
         UPDATE transactions 
-        SET value = ?, source_id = ?, date = ?, is_mandatory = ?, supplier_id = ?, card_id = ?, category_id = ?
+        SET value = ?, source_id = ?, date = ?, is_mandatory = ?, is_non_recurring_mandatory = ?, supplier_id = ?, card_id = ?, category_id = ?
         WHERE id = ?
-      `).run(value, source_id, date, is_mandatory ? 1 : 0, supplier_id, card_id || null, finalCatId, req.params.id);
+      `).run(value, source_id, date, is_mandatory ? 1 : 0, is_non_recurring_mandatory ? 1 : 0, supplier_id, card_id || null, finalCatId, req.params.id);
     });
 
     try {

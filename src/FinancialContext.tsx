@@ -71,7 +71,7 @@ export const FinancialProvider: React.FC<{
       if (!r.transactions) return;
       const income = r.transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.value), 0);
       const expense = r.transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.value), 0);
-      const mandatory = r.transactions.filter(t => t.type === 'expense' && t.is_mandatory).reduce((sum, t) => sum + Number(t.value), 0);
+      const mandatory = r.transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((sum, t) => sum + Number(t.value), 0);
 
       const startDate = getInitialDate(r.start_date);
       const endDate = getFinalDate(r.end_date);
@@ -128,10 +128,10 @@ export const FinancialProvider: React.FC<{
 
     const allKnownIncome = transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.value), 0);
     const allKnownExpenses = transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.value), 0);
-    const allMandatoryExpense = transactions.filter(t => t.type === 'expense' && t.is_mandatory).reduce((acc, t) => acc + Number(t.value), 0);
+    const allMandatoryExpense = transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((acc, t) => acc + Number(t.value), 0);
 
     const actualExpense = transactions.filter(t => t.type === 'expense' && t.date <= nowStr).reduce((acc, t) => acc + Number(t.value), 0);
-    const actualMandatoryExpense = transactions.filter(t => t.type === 'expense' && t.is_mandatory && t.date <= nowStr).reduce((acc, t) => acc + Number(t.value), 0);
+    const actualMandatoryExpense = transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory) && t.date <= nowStr).reduce((acc, t) => acc + Number(t.value), 0);
 
     const start = new Date(targetReport.start_date + "T00:00:00");
     const end = new Date(targetReport.end_date + "T23:59:59");

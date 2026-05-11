@@ -30,23 +30,26 @@ const Icon = ({ name, className }: { name: string; className?: string }) => {
   return <LucideIcon className={className || "w-4 h-4"} />;
 };
 
-export function CustomSelect({ 
-  value, 
-  onChange, 
-  options, 
-  label, 
-  className = "", 
+export function CustomSelect({
+  value,
+  onChange,
+  options,
+  label,
+  className = "",
   buttonClassName = "",
   multiple = false,
   disabled = false,
   disableClear = false,
 }: CustomSelectProps) {
+  const [searchTerm, setSearchTerm] = React.useState('');
+
   const filteredOptions = options.filter(o => {
     if (multiple && Array.isArray(value) && value.includes(o.value)) return false;
+    if (searchTerm && !o.label.toLowerCase().includes(searchTerm.toLowerCase())) return false;
     return true;
   });
 
-  const selectedOptions = multiple 
+  const selectedOptions = multiple
     ? (Array.isArray(value) ? options.filter(o => value.includes(o.value)) : [])
     : [options.find(o => o.value === value)].filter(Boolean);
 
@@ -116,6 +119,16 @@ export function CustomSelect({
             leaveTo="opacity-0"
           >
             <Listbox.Options className="absolute z-50 mt-1 max-h-60 min-w-full w-max overflow-auto rounded-xl bg-zinc-900 py-1 text-xs shadow-2xl ring-1 ring-black/5 focus:outline-none border border-zinc-800 backdrop-blur-xl">
+              <div className="px-2 py-1 sticky top-0 bg-zinc-900 z-10">
+                <input
+                  type="text"
+                  className="w-full bg-zinc-800 rounded-lg px-2 py-1.5 text-zinc-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder-zinc-500"
+                  placeholder="Buscar..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
               {filteredOptions.length === 0 ? (
                 <div className="py-4 px-4 text-center text-zinc-600 italic">Nenhum resultado</div>
               ) : (
@@ -123,24 +136,22 @@ export function CustomSelect({
                   <Listbox.Option
                     key={optionIdx}
                     className={({ active, selected }) =>
-                      `relative cursor-default select-none py-2.5 px-4 transition-all ${
-                        selected ? 'bg-emerald-500/10' : active ? 'bg-zinc-800' : ''
+                      `relative cursor-default select-none py-2.5 px-4 transition-all ${selected ? 'bg-emerald-500/10' : active ? 'bg-zinc-800' : ''
                       }`
                     }
                     value={option.value}
                   >
-                  {({ selected }) => (
-                    <span
-                      className={`flex items-center gap-2 ${
-                        selected ? 'font-black text-emerald-500' : 'font-bold text-zinc-400'
-                      } uppercase text-[10px] tracking-tight`}
-                    >
-                      {option.icon && <Icon name={option.icon} className={`w-3.5 h-3.5 ${selected ? 'text-emerald-500' : 'text-zinc-500'}`} />}
-                      <span className="block truncate">{option.label}</span>
-                    </span>
-                  )}
-                </Listbox.Option>
-              )))}
+                    {({ selected }) => (
+                      <span
+                        className={`flex items-center gap-2 ${selected ? 'font-black text-emerald-500' : 'font-bold text-zinc-400'
+                          } uppercase text-[10px] tracking-tight`}
+                      >
+                        {option.icon && <Icon name={option.icon} className={`w-3.5 h-3.5 ${selected ? 'text-emerald-500' : 'text-zinc-500'}`} />}
+                        <span className="block truncate">{option.label}</span>
+                      </span>
+                    )}
+                  </Listbox.Option>
+                )))}
             </Listbox.Options>
           </Transition>
         </div>

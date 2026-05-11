@@ -1613,28 +1613,29 @@ function ReportView({
   const stats = activeReportStats;
   const [viewMode, setViewMode] = useState<"overview" | "transactions" | "expenses">("overview");
 
-  const [filterType, setFilterType] = useState<string>("all");
-  const [filterSource, setFilterSource] = useState<string>("all");
-  const [filterCategory, setFilterCategory] = useState<string>("all");
-  const [filterSupplier, setFilterSupplier] = useState<string>("all");
-  const [filterCard, setFilterCard] = useState<string>("all");
-  const [filterMandatory, setFilterMandatory] = useState<string>("all");
+  const [filterType, setFilterType] = useState<string | null>(null);
+  const [filterSource, setFilterSource] = useState<string | null>(null);
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
+  const [filterCard, setFilterCard] = useState<string | null>(null);
+  const [filterMandatory, setFilterMandatory] = useState<string | null>(null);
   const [showFilterModal, setShowFilterModal] = useState(false);
 
   const filteredTotals = useMemo(() => {
     let income = 0;
     let expense = 0;
     report?.transactions?.filter(t => {
-      if (filterType !== "all" && t.type !== filterType) return false;
-      if (filterSource !== "all" && t.source_id !== filterSource) return false;
-      if (filterSupplier !== "all" && t.supplier_id !== filterSupplier) return false;
-      if (filterCard !== "all" && t.card_id !== filterCard) return false;
+      if (filterType && t.type !== filterType) return false;
+      if (filterSource && t.source_id !== filterSource) return false;
+      if (filterSupplier && t.supplier_id !== filterSupplier) return false;
+      if (filterCard && t.card_id !== filterCard) return false;
       if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
-      if (filterMandatory === 'discretionary' && t.is_mandatory) return false;
+      if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
+      if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
 
       let catId = t.category_id;
       if (!catId && (t as any).categories && (t as any).categories.length > 0) catId = (t as any).categories[0];
-      if (filterCategory !== "all" && catId !== filterCategory) return false;
+      if (filterCategory && catId !== filterCategory) return false;
 
       return true;
     }).forEach(t => {
@@ -1646,12 +1647,19 @@ function ReportView({
 
   const activeFilters = useMemo(() => {
     const filters = [];
-    if (filterType !== 'all') filters.push({ id: 'type', type: 'Tipo', value: filterType === 'income' ? 'Receita' : 'Despesa', clear: () => setFilterType('all') });
-    if (filterSource !== 'all') filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource('all') });
-    if (filterCategory !== 'all') filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory('all') });
-    if (filterSupplier !== 'all') filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier('all') });
-    if (filterCard !== 'all') filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard('all') });
-    if (filterMandatory !== 'all') filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: filterMandatory === 'mandatory' ? 'Obrigatório' : 'Discricionário', clear: () => setFilterMandatory('all') });
+    if (filterType) filters.push({ id: 'type', type: 'Tipo', value: filterType === 'income' ? 'Receita' : 'Despesa', clear: () => setFilterType(null) });
+    if (filterSource) filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource(null) });
+    if (filterCategory) filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory(null) });
+    if (filterSupplier) filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier(null) });
+    if (filterCard) filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard(null) });
+    if (filterMandatory) {
+      const labels: Record<string, string> = {
+        'mandatory': 'Obrigatório (Recorrente)',
+        'non_recurring_mandatory': 'Obrigatório (Não recorrente)',
+        'discretionary': 'Discricionário'
+      };
+      filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: labels[filterMandatory], clear: () => setFilterMandatory(null) });
+    }
     return filters;
   }, [filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, sources, categories, suppliers, cards]);
 
@@ -1660,16 +1668,17 @@ function ReportView({
     const groups: Record<string, Transaction[]> = {};
 
     report.transactions.filter(t => {
-      if (filterType !== "all" && t.type !== filterType) return false;
-      if (filterSource !== "all" && t.source_id !== filterSource) return false;
-      if (filterSupplier !== "all" && t.supplier_id !== filterSupplier) return false;
-      if (filterCard !== "all" && t.card_id !== filterCard) return false;
+      if (filterType && t.type !== filterType) return false;
+      if (filterSource && t.source_id !== filterSource) return false;
+      if (filterSupplier && t.supplier_id !== filterSupplier) return false;
+      if (filterCard && t.card_id !== filterCard) return false;
       if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
-      if (filterMandatory === 'discretionary' && t.is_mandatory) return false;
+      if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
+      if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
 
       let catId = t.category_id;
       if (!catId && (t as any).categories && (t as any).categories.length > 0) catId = (t as any).categories[0];
-      if (filterCategory !== "all" && catId !== filterCategory) return false;
+      if (filterCategory && catId !== filterCategory) return false;
 
       return true;
     }).forEach(t => {
@@ -1950,8 +1959,17 @@ function ReportView({
           </div>
         </div>
       ) : viewMode === 'expenses' ? (
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 bg-zinc-900 border border-zinc-800 rounded-xl">
-          <ExpensesView transactions={report.transactions || []} categories={categories} sources={sources} suppliers={suppliers} cards={cards} />
+        <div className="flex-1 overflow-y-auto custom-scrollbarbg-zinc-900 border border-zinc-800 rounded-xl">
+          <ExpensesView
+            transactions={report.transactions || []}
+            categories={categories}
+            sources={sources}
+            suppliers={suppliers}
+            cards={cards}
+            month={report.month}
+            year={report.year}
+            onBack={() => setViewMode('overview')}
+          />
         </div>
       ) : (
         <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl min-h-0 relative">
@@ -1981,7 +1999,7 @@ function ReportView({
 
           <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10">
             <div className="flex items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4" style={{ justifyContent: 'space-between', width: '100%' }}>
                 <h2 className="text-lg font-black tracking-tighter text-white uppercase flex items-center gap-2">
                   <ListFilter className="w-5 h-5 text-zinc-500" />
                   Histórico de Transações
@@ -2086,33 +2104,33 @@ function ReportView({
                   label="Tipo de Transação"
                   value={filterType}
                   onChange={setFilterType}
-                  options={[{ value: 'all', label: 'Todos', icon: 'Filter' }, { value: 'expense', label: 'Despesa', icon: 'ArrowDownCircle' }, { value: 'income', label: 'Receita', icon: 'ArrowUpCircle' }]}
+                  options={[{ value: 'expense', label: 'Despesa', icon: 'ArrowDownCircle' }, { value: 'income', label: 'Receita', icon: 'ArrowUpCircle' }]}
                 />
                 <CustomSelect
                   label="Fonte"
                   value={filterSource}
                   onChange={setFilterSource}
-                  options={[{ value: 'all', label: 'Todas', icon: 'Filter' }, ...sources.map(s => ({ value: s.id, label: s.name, icon: s.icon }))]}
+                  options={sources.map(s => ({ value: s.id, label: s.name, icon: s.icon }))}
                 />
                 <CustomSelect
                   label="Categoria"
                   value={filterCategory}
                   onChange={setFilterCategory}
-                  options={[{ value: 'all', label: 'Todas', icon: 'Filter' }, ...categories.map(c => ({ value: c.id, label: c.name, icon: c.icon }))]}
+                  options={categories.map(c => ({ value: c.id, label: c.name, icon: c.icon }))}
                 />
                 <CustomSelect
                   label="Cartão"
                   value={filterCard}
                   onChange={setFilterCard}
-                  options={[{ value: 'all', label: 'Todos', icon: 'CreditCard' }, ...cards.map(c => ({ value: c.id, label: c.name, icon: 'CreditCard' }))]}
+                  options={cards.map(c => ({ value: c.id, label: c.name, icon: 'CreditCard' }))}
                 />
                 <CustomSelect
                   label="Tipo de Gasto"
                   value={filterMandatory}
                   onChange={setFilterMandatory}
                   options={[
-                    { value: 'all', label: 'Todos', icon: 'Filter' },
-                    { value: 'mandatory', label: 'Obrigatório', icon: 'AlertCircle' },
+                    { value: 'mandatory', label: 'Obrigatório (Recorrente)', icon: 'AlertCircle' },
+                    { value: 'non_recurring_mandatory', label: 'Obrigatório (Não recorrente)', icon: 'AlertCircle' },
                     { value: 'discretionary', label: 'Discricionário', icon: 'Coffee' }
                   ]}
                 />
@@ -2405,6 +2423,11 @@ function TransactionItem({ t, onDelete, onClick, categories, sources, isDuplicat
               OBR
             </div>
           )}
+          {!!t.is_non_recurring_mandatory && (
+            <div className="px-1 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+              NR-OBR
+            </div>
+          )}
           {isDuplicate && (
             <div className="flex items-center gap-0.5 px-1 py-0.5 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded text-[6px] font-black tracking-widest leading-none" title="Possível transação duplicada (mesmo valor e fornecedor)">
               <AlertTriangle className="w-2 h-2" />
@@ -2625,7 +2648,8 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
     card_id: transaction?.card_id || null,
     category_id: transaction?.category_id || (transaction?.categories?.length > 0 ? transaction.categories[0] : (preSelectedCategories.length > 0 ? preSelectedCategories[0] : null)),
     date: transaction?.date || new Date().toISOString().split("T")[0],
-    is_mandatory: transaction?.is_mandatory || false
+    is_mandatory: transaction?.is_mandatory || false,
+    is_non_recurring_mandatory: transaction?.is_non_recurring_mandatory || false
   });
 
   const isCardSource = sources.find((s: any) => s.id === formData.source_id)?.name === "CARTÃO";
@@ -2794,13 +2818,18 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
           {formData.type === 'expense' && (
             <div className="space-y-1.5">
               <CustomSelect
-                label="Despesa Obrigatória"
+                label="Tipo de Despesa"
                 disabled={isSubmitting}
-                value={formData.is_mandatory ? 1 : 0}
-                onChange={val => setFormData({ ...formData, is_mandatory: val === 1 })}
+                value={formData.is_mandatory ? 'mandatory' : formData.is_non_recurring_mandatory ? 'non_recurring_mandatory' : 'discretionary'}
+                onChange={val => setFormData({
+                  ...formData,
+                  is_mandatory: val === 'mandatory',
+                  is_non_recurring_mandatory: val === 'non_recurring_mandatory'
+                })}
                 options={[
-                  { value: 1, label: 'SIM' },
-                  { value: 0, label: 'NÃO' }
+                  { value: 'discretionary', label: 'Discricionário' },
+                  { value: 'mandatory', label: 'Obrigatório (Recorrente)' },
+                  { value: 'non_recurring_mandatory', label: 'Obrigatório (Não recorrente)' }
                 ]}
               />
             </div>
@@ -4828,14 +4857,15 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
 
     const isOutOfBounds = activeStart && activeEnd && (tDate < activeStart || tDate > activeEnd);
 
-    // Improved duplicate detection: same value and same supplier (id or name), regardless of date
-    const tSupplierKey = t.supplier_id || t.aliasName;
+    // Improved duplicate detection: same value, same supplier, same source, same report
     const isDuplicate = reports?.some((r: any) =>
       r.transactions?.some((existing: any) => {
-        const existingSupplierKey = existing.supplier_id || existing.supplier_name;
-        return Math.abs(existing.value - t.value) < 0.01 &&
+        return existing.id !== t.id &&
+          Math.abs(existing.value - t.value) < 0.01 &&
           existing.type === t.type &&
-          existingSupplierKey === tSupplierKey;
+          existing.supplier_id === t.supplier_id &&
+          existing.source_id === t.source_id &&
+          existing.report_id === t.report_id;
       })
     );
 
