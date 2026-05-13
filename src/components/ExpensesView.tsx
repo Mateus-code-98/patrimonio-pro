@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Transaction, Category, Source, Supplier, Card } from '../types';
+import { Transaction, Category, Source, Supplier } from '../types';
 import { CustomSelect } from './CustomSelect';
 import { Calendar, ChevronLeft, Filter, ListFilter, X } from 'lucide-react';
 
@@ -27,7 +27,7 @@ export const ExpensesView = ({
     categories: Category[];
     sources: Source[];
     suppliers: Supplier[];
-    cards: Card[];
+    cards: any[];
     month: number;
     year: number;
     onBack: () => void;
@@ -40,6 +40,26 @@ export const ExpensesView = ({
     const [startDate, setStartDate] = useState<string>("");
     const [endDate, setEndDate] = useState<string>("");
     const [showFilterModal, setShowFilterModal] = useState(false);
+
+    const availableCategories = useMemo(() => {
+        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.category_id));
+        return categories.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name }));
+    }, [transactions, categories]);
+
+    const availableSources = useMemo(() => {
+        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.source_id));
+        return sources.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name }));
+    }, [transactions, sources]);
+
+    const availableSuppliers = useMemo(() => {
+        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.supplier_id));
+        return suppliers.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name }));
+    }, [transactions, suppliers]);
+
+    const availableCards = useMemo(() => {
+        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.card_id));
+        return cards.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name }));
+    }, [transactions, cards]);
 
     const TYPE_LABELS: Record<string, string> = {
         'mandatory': 'Obrigatório (Recorrente)',
@@ -117,7 +137,7 @@ export const ExpensesView = ({
     };
 
     const renderRankList = (data: any[], title: string) => (
-        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: "calc(100vh - 315px)" }}>
+        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: activeFilters.length > 0 ? "calc(100vh - 410px)" : "calc(100vh - 383px)" }}>
             <h3 className="text-sm font-bold text-zinc-300 mb-3 flex-shrink-0">{title}</h3>
             <div className="space-y-3 overflow-y-auto pr-2 flex-1">
                 {data.map((item, index) => (
@@ -132,25 +152,7 @@ export const ExpensesView = ({
 
     return (
         <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl min-h-0 relative">
-            <div className="p-4 flex items-center justify-between gap-4 border-b border-zinc-800 flex-shrink-0">
-                <button
-                    onClick={onBack}
-                    className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-tight"
-                >
-                    <ChevronLeft className="w-4 h-4" /> Voltar
-                </button>
-                <div className="flex items-center gap-2">
-                    <div className="bg-zinc-800 border border-zinc-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-zinc-500" />
-                        <span className="text-xs font-bold text-zinc-200 uppercase tracking-tight">{MONTH_NAMES[month]} {year}</span>
-                    </div>
-                    <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all">
-                        <Filter className="w-4 h-4" /> Filtrar {activeFilters.length > 0 && <span className="bg-emerald-500 text-emerald-950 px-1.5 py-0.5 rounded text-[10px]">{activeFilters.length}</span>}
-                    </button>
-                </div>
-            </div>
-
-            <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10 flex-shrink-0">
+            <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10 flex-shrink-0 rounded-t-xl">
                 <div className="flex items-center justify-between gap-4 mb-4">
                     <div className="flex items-center gap-4" style={{ justifyContent: 'space-between', width: '100%' }}>
                         <h2 className="text-lg font-black tracking-tighter text-white uppercase flex items-center gap-2">
@@ -162,6 +164,10 @@ export const ExpensesView = ({
                                 <p className="text-[9px] text-zinc-400 uppercase font-bold">Total</p>
                                 <p className="text-sm font-mono font-bold text-rose-400">{formatCurrency(totals.expense)}</p>
                             </div>
+                            <div className="w-px h-4 bg-zinc-700 ml-2"></div>
+                            <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all cursor-pointer">
+                                <Filter className="w-3 h-3" /> Filtrar {activeFilters.length > 0 && <span className="bg-emerald-500 text-emerald-950 px-1.5 py-0.5 rounded text-[10px]">{activeFilters.length}</span>}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -170,8 +176,8 @@ export const ExpensesView = ({
                     <div className="flex flex-wrap items-center gap-2">
                         {activeFilters.map(f => (
                             <div key={f.id} className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded-full px-3 py-1 shadow-sm">
-                                <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest">{f.type}:</span>
-                                <span className="text-xs font-black text-zinc-200 capitalize truncate max-w-[150px]">{f.value}</span>
+                                <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest uppercase">{f.type}:</span>
+                                <span className="text-xs font-black text-zinc-200 capitalize truncate max-w-[150px] uppercase">{f.value}</span>
                                 <button onClick={f.clear} className="text-zinc-500 hover:text-rose-400 transition-colors ml-1 p-0.5 rounded-full hover:bg-zinc-700/50">
                                     <X className="w-3 h-3" />
                                 </button>
@@ -193,10 +199,10 @@ export const ExpensesView = ({
                         </button>
                         <h3 className="text-lg font-black uppercase tracking-tighter text-white">Filtros de Despesas</h3>
                         <div className="grid grid-cols-1 gap-4">
-                            <CustomSelect label="Categoria" value={filterCategory} onChange={setFilterCategory} options={categories.map(c => ({ value: c.id, label: c.name }))} />
-                            <CustomSelect label="Fonte" value={filterSource} onChange={setFilterSource} options={sources.map(c => ({ value: c.id, label: c.name }))} />
-                            <CustomSelect label="Fornecedor" value={filterSupplier} onChange={setFilterSupplier} options={suppliers.map(c => ({ value: c.id, label: c.name }))} />
-                            <CustomSelect label="Cartão" value={filterCard} onChange={setFilterCard} options={cards.map(c => ({ value: c.id, label: c.name }))} />
+                            <CustomSelect label="Categoria" value={filterCategory} onChange={setFilterCategory} options={availableCategories} />
+                            <CustomSelect label="Fonte" value={filterSource} onChange={setFilterSource} options={availableSources} />
+                            <CustomSelect label="Fornecedor" value={filterSupplier} onChange={setFilterSupplier} options={availableSuppliers} />
+                            <CustomSelect label="Cartão" value={filterCard} onChange={setFilterCard} options={availableCards} />
                             <CustomSelect label="Tipo de Gasto" value={filterMandatory} onChange={setFilterMandatory} options={[
                                 { value: 'mandatory', label: 'Obrigatório (Recorrente)' },
                                 { value: 'non_recurring_mandatory', label: 'Obrigatório (Não recorrente)' },

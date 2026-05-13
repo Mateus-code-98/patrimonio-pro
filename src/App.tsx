@@ -105,7 +105,8 @@ import {
   Flag,
   Filter,
   ListFilter,
-  Activity
+  Activity,
+  BarChart2
 } from "lucide-react";
 import {
   LineChart,
@@ -1611,7 +1612,7 @@ function ReportView({
   const { activeReportStats } = useFinancial();
   const timeToGoal = useTimeToGoal(report, config);
   const stats = activeReportStats;
-  const [viewMode, setViewMode] = useState<"overview" | "transactions" | "expenses">("overview");
+  const [viewMode, setViewMode] = useState<"overview" | "transactions" | "expenses" | "discretionary">("overview");
 
   const [filterType, setFilterType] = useState<string | null>(null);
   const [filterSource, setFilterSource] = useState<string | null>(null);
@@ -1620,74 +1621,27 @@ function ReportView({
   const [filterCard, setFilterCard] = useState<string | null>(null);
   const [filterMandatory, setFilterMandatory] = useState<string | null>(null);
   const [showFilterModal, setShowFilterModal] = useState(false);
+  const [filterDuplicate, setFilterDuplicate] = useState<boolean>(false);
 
-  const filteredTotals = useMemo(() => {
-    let income = 0;
-    let expense = 0;
-    report?.transactions?.filter(t => {
-      if (filterType && t.type !== filterType) return false;
-      if (filterSource && t.source_id !== filterSource) return false;
-      if (filterSupplier && t.supplier_id !== filterSupplier) return false;
-      if (filterCard && t.card_id !== filterCard) return false;
-      if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
-      if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
-      if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
+  const availableCategories = useMemo(() => {
+    const ids = new Set(report.transactions?.map((t: any) => t.category_id || (t.categories && t.categories[0])));
+    return categories.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name, icon: c.icon }));
+  }, [report.transactions, categories]);
 
-      let catId = t.category_id;
-      if (!catId && (t as any).categories && (t as any).categories.length > 0) catId = (t as any).categories[0];
-      if (filterCategory && catId !== filterCategory) return false;
+  const availableSources = useMemo(() => {
+    const ids = new Set(report.transactions?.map((t: any) => t.source_id));
+    return sources.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name, icon: s.icon }));
+  }, [report.transactions, sources]);
 
-      return true;
-    }).forEach(t => {
-      if (t.type === 'income') income += t.value;
-      else if (t.type === 'expense') expense += t.value;
-    });
-    return { income, expense };
-  }, [report?.transactions, filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory]);
+  const availableSuppliers = useMemo(() => {
+    const ids = new Set(report.transactions?.map((t: any) => t.supplier_id));
+    return suppliers.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name }));
+  }, [report.transactions, suppliers]);
 
-  const activeFilters = useMemo(() => {
-    const filters = [];
-    if (filterType) filters.push({ id: 'type', type: 'Tipo', value: filterType === 'income' ? 'Receita' : 'Despesa', clear: () => setFilterType(null) });
-    if (filterSource) filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource(null) });
-    if (filterCategory) filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory(null) });
-    if (filterSupplier) filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier(null) });
-    if (filterCard) filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard(null) });
-    if (filterMandatory) {
-      const labels: Record<string, string> = {
-        'mandatory': 'Obrigatório (Recorrente)',
-        'non_recurring_mandatory': 'Obrigatório (Não recorrente)',
-        'discretionary': 'Discricionário'
-      };
-      filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: labels[filterMandatory], clear: () => setFilterMandatory(null) });
-    }
-    return filters;
-  }, [filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, sources, categories, suppliers, cards]);
-
-  const groupedTransactions = useMemo(() => {
-    if (!report || !report.transactions) return {};
-    const groups: Record<string, Transaction[]> = {};
-
-    report.transactions.filter(t => {
-      if (filterType && t.type !== filterType) return false;
-      if (filterSource && t.source_id !== filterSource) return false;
-      if (filterSupplier && t.supplier_id !== filterSupplier) return false;
-      if (filterCard && t.card_id !== filterCard) return false;
-      if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
-      if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
-      if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
-
-      let catId = t.category_id;
-      if (!catId && (t as any).categories && (t as any).categories.length > 0) catId = (t as any).categories[0];
-      if (filterCategory && catId !== filterCategory) return false;
-
-      return true;
-    }).forEach(t => {
-      const date = t.date;
-      if (!groups[date]) groups[date] = [];
-      groups[date].push(t);
-    });
-    return groups;
-  }, [report?.transactions, filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory]);
+  const availableCards = useMemo(() => {
+    const ids = new Set(report.transactions?.map((t: any) => t.card_id));
+    return cards.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name }));
+  }, [report.transactions, cards]);
 
   const potentialDuplicates = useMemo(() => {
     if (!reports) return new Set<string>();
@@ -1698,7 +1652,7 @@ function ReportView({
       if (!r.transactions) return;
       r.transactions.forEach(t => {
         if (t.type !== 'expense') return;
-        const key = `${t.supplier_id || t.supplier_name || 'unknown'}-${t.value}`;
+        const key = `${t.supplier_id || t.supplier_name || 'unknown'}-${t.value}-${t.report_id}`;
         if (!counts[key]) counts[key] = [];
         counts[key].push(t.id);
       });
@@ -1712,6 +1666,140 @@ function ReportView({
 
     return duplicates;
   }, [reports]);
+
+  const filteredTransactionsList = useMemo(() => {
+    if (!report?.transactions) return [];
+    return report.transactions.filter(t => {
+      if (filterType && t.type !== filterType) return false;
+      if (filterSource && t.source_id !== filterSource) return false;
+      if (filterSupplier && t.supplier_id !== filterSupplier) return false;
+      if (filterCard && t.card_id !== filterCard) return false;
+      if (filterDuplicate && !potentialDuplicates.has(t.id)) return false;
+      if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
+      if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
+      if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
+
+      let catId = t.category_id;
+      if (!catId && (t as any).categories && (t as any).categories.length > 0) catId = (t as any).categories[0];
+      if (filterCategory && catId !== filterCategory) return false;
+
+      return true;
+    });
+  }, [report?.transactions, filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, filterDuplicate, potentialDuplicates]);
+
+  const dailyChartData = useMemo(() => {
+    if (!report?.transactions || !report.start_date || !report.end_date) return [];
+
+    let earliestDate = report.start_date;
+    let latestDate = report.end_date;
+
+    filteredTransactionsList.forEach(t => {
+      if (t.date < earliestDate) earliestDate = t.date;
+      if (t.date > latestDate) latestDate = t.date;
+    });
+
+    const startParts = earliestDate.split('-');
+    const endParts = latestDate.split('-');
+    if (startParts.length !== 3 || endParts.length !== 3) return [];
+
+    const start = new Date(Number(startParts[0]), Number(startParts[1]) - 1, Number(startParts[2]));
+    const end = new Date(Number(endParts[0]), Number(endParts[1]) - 1, Number(endParts[2]));
+
+    const data = [];
+    const curr = new Date(start);
+
+    let totalIncome = 0;
+    let totalMandatory = 0;
+
+    filteredTransactionsList.forEach(t => {
+      if (t.type === 'income') {
+        totalIncome += t.value;
+      }
+      if (t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)) {
+        totalMandatory += t.value;
+      }
+    });
+
+    let accDiscretionary = 0;
+
+    while (curr <= end) {
+      const y = curr.getFullYear();
+      const m = String(curr.getMonth() + 1).padStart(2, '0');
+      const d = String(curr.getDate()).padStart(2, '0');
+      const dayString = `${y}-${m}-${d}`;
+
+      let expense = 0;
+      let discretionary = 0;
+
+      filteredTransactionsList.forEach(t => {
+        if (t.date === dayString) {
+          if (t.type === 'expense') {
+            expense += t.value;
+            if (!t.is_mandatory && !t.is_non_recurring_mandatory) {
+              discretionary += t.value;
+            }
+          }
+        }
+      });
+
+      accDiscretionary += discretionary;
+
+      data.push({
+        date: `${d}/${m}`,
+        dayString,
+        Despesas: discretionary,
+        ReceitaTotal: totalIncome,
+        ObrigatorioTotal: totalMandatory,
+        AcumuladoDiscricionario: accDiscretionary,
+        SobraReal: totalIncome - totalMandatory - accDiscretionary
+      });
+
+      curr.setDate(curr.getDate() + 1);
+    }
+    return data;
+  }, [report, filteredTransactionsList]);
+
+  const filteredTotals = useMemo(() => {
+    let income = 0;
+    let expense = 0;
+    filteredTransactionsList.forEach(t => {
+      if (t.type === 'income') income += t.value;
+      else if (t.type === 'expense') expense += t.value;
+    });
+    return { income, expense };
+  }, [filteredTransactionsList]);
+
+  const activeFilters = useMemo(() => {
+    const filters = [];
+    if (filterType) filters.push({ id: 'type', type: 'Tipo', value: filterType === 'income' ? 'Receita' : 'Despesa', clear: () => setFilterType(null) });
+    if (filterSource) filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource(null) });
+    if (filterCategory) filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory(null) });
+    if (filterSupplier) filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier(null) });
+    if (filterCard) filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard(null) });
+    if (filterDuplicate) filters.push({ id: 'duplicate', type: 'Filtro', value: 'Risco de duplicidade', clear: () => setFilterDuplicate(false) });
+    if (filterMandatory) {
+      const labels: Record<string, string> = {
+        'mandatory': 'Obrigatório (Recorrente)',
+        'non_recurring_mandatory': 'Obrigatório (Não recorrente)',
+        'discretionary': 'Discricionário'
+      };
+      filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: labels[filterMandatory], clear: () => setFilterMandatory(null) });
+    }
+    return filters;
+  }, [filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, filterDuplicate, sources, categories, suppliers, cards]);
+
+  const groupedTransactions = useMemo(() => {
+    if (!report || !report.transactions) return {};
+    const groups: Record<string, Transaction[]> = {};
+
+    filteredTransactionsList.forEach(t => {
+      const date = t.date;
+      if (!groups[date]) groups[date] = [];
+      groups[date].push(t);
+    });
+    return groups;
+  }, [report?.transactions, filteredTransactionsList]);
+
 
   const { now, isTheFinalDate, start, end, daysLeft, progress, isInProgress, isNotStarted, metOkrMin, metOkrAmbitious, totalDays, daysPassed } = useMemo(() => {
     if (!report) return { now: new Date(), isTheFinalDate: false, start: new Date(), end: new Date(), daysLeft: 0, progress: 0, isInProgress: false, isNotStarted: false, metOkrMin: false, metOkrAmbitious: false, totalDays: 0, daysPassed: 0 };
@@ -1761,49 +1849,49 @@ function ReportView({
       exit={{ opacity: 0 }}
       className="flex flex-col gap-4 h-full overflow-hidden"
     >
-      {/* Header Summary - Only in Overview */}
-      {viewMode === 'overview' && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl px-6 py-4 flex items-center justify-between shadow-lg shrink-0">
-          <div className="flex items-center gap-4">
-            <button onClick={onBack} className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-all cursor-pointer">
-              <Home className="w-4 h-4" />
+      {/* Header Summary */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl px-6 py-4 flex items-center justify-between shadow-lg shrink-0 z-20 relative">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-all cursor-pointer">
+            <Home className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onNavigate('prev')}
+              className="p-1 hover:bg-zinc-800 rounded transition-all cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4 text-zinc-500" />
             </button>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => onNavigate('prev')}
-                className="p-1 hover:bg-zinc-800 rounded transition-all cursor-pointer"
-              >
-                <ChevronLeft className="w-4 h-4 text-zinc-500" />
-              </button>
-              <div className="flex flex-col items-center gap-0.5">
-                <h2 className="text-lg font-bold tracking-tight">{MONTH_NAMES[report.month]} <span className="text-zinc-500 text-sm">{report.year}</span></h2>
-                <p className="text-[10px] text-zinc-500 font-mono">{formatDate(report.start_date)} - {formatDate(report.end_date)}</p>
-              </div>
-              <button
-                onClick={() => onNavigate('next')}
-                className="p-1 hover:bg-zinc-800 rounded transition-all cursor-pointer"
-              >
-                <ChevronRight className="w-4 h-4 text-zinc-500" />
-              </button>
+            <div className="flex flex-col items-center gap-0.5">
+              <h2 className="text-lg font-bold tracking-tight">{MONTH_NAMES[report.month]} <span className="text-zinc-500 text-sm">{report.year}</span></h2>
+              <p className="text-[10px] text-zinc-500 font-mono">{formatDate(report.start_date)} - {formatDate(report.end_date)}</p>
+            </div>
+            <button
+              onClick={() => onNavigate('next')}
+              className="p-1 hover:bg-zinc-800 rounded transition-all cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4 text-zinc-500" />
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-6">
+          <div className="text-right">
+            <p className="text-[10px] text-zinc-500 font-bold uppercase">Patrimônio Inicial</p>
+            <p className="text-sm font-mono font-bold text-zinc-200">{formatCurrency(report.initial_patrimony)}</p>
+          </div>
+          <div className="text-right border-l border-zinc-800 pl-6">
+            <p className="text-[10px] text-zinc-500 font-bold uppercase">Taxa de Juros</p>
+            <div className="flex flex-col items-end">
+              <p className="text-sm font-mono font-bold text-blue-400">
+                {report.selic_tax}% <span className="text-[8px] text-zinc-600 font-normal uppercase tracking-tighter">a.a</span>
+              </p>
+              <p className="text-[10px] font-mono font-bold text-zinc-400">
+                {((Math.pow(1 + (report.selic_tax / 100), 1 / 12) - 1) * 100).toFixed(4)}% <span className="text-[8px] text-zinc-600 font-normal uppercase tracking-tighter">a.m</span>
+              </p>
             </div>
           </div>
-          <div className="flex gap-6">
-            <div className="text-right">
-              <p className="text-[10px] text-zinc-500 font-bold uppercase">Patrimônio Inicial</p>
-              <p className="text-sm font-mono font-bold text-zinc-200">{formatCurrency(report.initial_patrimony)}</p>
-            </div>
-            <div className="text-right border-l border-zinc-800 pl-6">
-              <p className="text-[10px] text-zinc-500 font-bold uppercase">Taxa de Juros</p>
-              <div className="flex flex-col items-end">
-                <p className="text-sm font-mono font-bold text-blue-400">
-                  {report.selic_tax}% <span className="text-[8px] text-zinc-600 font-normal uppercase tracking-tighter">a.a</span>
-                </p>
-                <p className="text-[10px] font-mono font-bold text-zinc-400">
-                  {((Math.pow(1 + (report.selic_tax / 100), 1 / 12) - 1) * 100).toFixed(4)}% <span className="text-[8px] text-zinc-600 font-normal uppercase tracking-tighter">a.m</span>
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 justify-end">
               <button
                 onClick={onEditReport}
                 className="p-2 border border-zinc-800 hover:bg-zinc-800 text-zinc-500 hover:text-white rounded-lg transition-all cursor-pointer"
@@ -1824,255 +1912,353 @@ function ReportView({
               >
                 Nova transação
               </button>
-              <button onClick={() => setViewMode("overview")} className={`text-xs px-4 py-2 rounded-lg font-black uppercase tracking-tighter transition-all shadow-lg active:scale-95 cursor-pointer ${viewMode === 'overview' ? 'bg-zinc-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'}`}>Geral</button>
-              <button onClick={() => setViewMode("transactions")} className={`text-xs px-4 py-2 rounded-lg font-black uppercase tracking-tighter transition-all shadow-lg active:scale-95 cursor-pointer ${viewMode === 'transactions' ? 'bg-zinc-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'}`}>Transações</button>
-              <button onClick={() => setViewMode("expenses")} className={`text-xs px-4 py-2 rounded-lg font-black uppercase tracking-tighter transition-all shadow-lg active:scale-95 cursor-pointer ${viewMode === 'expenses' ? 'bg-emerald-600 text-white' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'}`}>Despesas</button>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
-      {viewMode === 'overview' ? (
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Stats Grid - Full Width */}
-          <div className="col-span-12 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <StatCard title="Receita Atual" value={stats?.totalIncome || 0} color="text-emerald-400" extra={`v/ 100%`} />
-            <StatCard
-              title="Gastos Totais"
-              value={stats?.totalExpense || 0}
-              color="text-rose-400"
-              secondaryStats={[
-                {
-                  label: "Obrigatórios",
-                  value: stats?.mandatoryExpense || 0,
-                  tooltip: "Soma de todos os gastos marcados como obrigatórios"
-                },
-                {
-                  label: "Discricionários",
-                  value: (stats?.totalExpense || 0) - (stats?.mandatoryExpense || 0),
-                  tooltip: "Gastos não obrigatórios realizados até o momento"
-                },
-                {
-                  label: "Diário",
-                  value: stats?.currentDailyAvg || 0,
-                  tooltip: "Média diária de gastos não obrigatórios (até hoje)"
-                }
-              ]}
-            />
-            <StatCard
-              title="Sobra projetada"
-              value={stats?.expectedSurplus || 0}
-              color="text-emerald-400"
-              highlight
-              gradient
-              totalEstimated={stats?.expectedDiscretionaryFuture || 0}
-              totalEstimatedTooltip="Estimativa de gastos não obrigatórios restantes até o fim do ciclo"
-              miniValue={stats?.partialSurplus || 0}
-              miniValueTooltip="Quanto sobrou de fato até o momento (Receita - Despesas realizadas)"
-            />
-          </div>
-
-          {/* Row 2: Progress + OKRs */}
-          <div className="col-span-12 lg:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Progress Card (Smaller) */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-lg flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                  <Calendar className="w-4 h-4 text-emerald-400" />
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold text-zinc-300 tracking-wider uppercase">Progresso</p>
-                  <p className="text-[9px] text-zinc-500 font-medium">{daysPassed} / {totalDays} dias</p>
-                </div>
-              </div>
-              <div className="flex-1 w-full max-w-[150px]">
-                <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400" style={{ width: `${progress}%` }} />
-                </div>
-              </div>
-              <span className="text-emerald-400 font-black text-sm">{Math.round(progress)}%</span>
-            </div>
-
-            {/* OKRs Card */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-lg flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 bg-blue-500/10 rounded-lg">
-                  <Target className="w-4 h-4 text-blue-500" />
-                </div>
-                <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">OKRs</h3>
-              </div>
-              <div className="flex-1 space-y-2">
-                <div className="text-[9px] flex justify-between text-zinc-400 font-bold uppercase"><span>Mín</span><span>Ambi</span></div>
-                <div className="flex gap-2">
-                  <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
-                    <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, (stats?.totalIncome - stats?.totalExpense - stats?.expectedDiscretionaryFuture) / report.okr_min * 100))}%` }} />
-                  </div>
-                  <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
-                    <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, (stats?.totalIncome - stats?.totalExpense - stats?.expectedDiscretionaryFuture) / report.okr_ambitious * 100))}%` }} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Row 3: Wealth + End */}
-          <div className="col-span-12 lg:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-emerald-500/10 rounded-lg">
-                  <TrendingUp className="w-5 h-5 text-emerald-500" />
-                </div>
-                <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">Meta de Patrimônio</h3>
-              </div>
-              <div className="text-right">
-                <span className="text-xl font-black text-emerald-500 font-mono">
-                  {formatCurrency(config?.goal_target_default || 1000000)}
-                </span>
-                <p className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">
-                  Estimado: <span className="text-zinc-300">{timeToGoal ? `${timeToGoal.years}a ${timeToGoal.months}m` : "---"}</span>
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-zinc-500/10 rounded-lg">
-                  <Flag className="w-5 h-5 text-zinc-400" />
-                </div>
-                <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">Fim do Relatório</h3>
-              </div>
-              <div className="text-right">
-                <span className="text-xl font-black text-white font-mono">
-                  {formatCurrency(report.initial_patrimony + (stats?.expectedSurplus || 0))}
-                </span>
-                <p className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">Estimativa Final</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Row 4: AI Projection */}
-          <div className="col-span-12">
-            <AIProjectionCard
-              report={report}
-              onCalculate={onCalculateProjection}
-            />
-          </div>
-        </div>
-      ) : viewMode === 'expenses' ? (
-        <div className="flex-1 overflow-y-auto custom-scrollbarbg-zinc-900 border border-zinc-800 rounded-xl">
-          <ExpensesView
-            transactions={report.transactions || []}
-            categories={categories}
-            sources={sources}
-            suppliers={suppliers}
-            cards={cards}
-            month={report.month}
-            year={report.year}
-            onBack={() => setViewMode('overview')}
+      <div className="flex justify-center items-center gap-2 pt-0 pb-0 z-10 shrink-0">
+        {(['overview', 'transactions', 'expenses', 'discretionary'] as const).map((mode, idx) => (
+          <button
+            key={mode}
+            onClick={() => setViewMode(mode)}
+            className={`w-2 h-2 rounded-full transition-all ${viewMode === mode ? 'bg-emerald-500 w-4' : 'bg-zinc-700 hover:bg-zinc-500 cursor-pointer'}`}
+            title={mode === 'overview' ? 'Geral' : mode === 'transactions' ? 'Transações' : mode === 'expenses' ? 'Despesas' : 'Discricionários'}
+            aria-label={mode}
           />
-        </div>
-      ) : (
-        <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl min-h-0 relative">
-          <div className="p-4 flex items-center justify-between gap-4 border-b border-zinc-800">
-            <button
-              onClick={() => setViewMode("overview")}
-              className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-tight"
-            >
-              <ChevronLeft className="w-4 h-4" /> Voltar
-            </button>
-            <div className="flex items-center gap-2">
-              <div className="bg-zinc-800 border border-zinc-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-zinc-500" />
-                <span className="text-xs font-bold text-zinc-200 uppercase tracking-tight">{MONTH_NAMES[report.month]} {report.year}</span>
-              </div>
-              <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all">
-                <Filter className="w-4 h-4" /> Filtrar {activeFilters.length > 0 && <span className="bg-emerald-500 text-emerald-950 px-1.5 py-0.5 rounded text-[10px]">{activeFilters.length}</span>}
-              </button>
-              <button
-                onClick={onAddTransaction}
-                className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 text-xs px-4 py-2 rounded-lg font-black uppercase tracking-tighter transition-all shadow-lg active:scale-95 cursor-pointer"
-              >
-                Nova transação
-              </button>
-            </div>
-          </div>
+        ))}
+      </div>
 
-          <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10">
-            <div className="flex items-center justify-between gap-4 mb-4">
-              <div className="flex items-center gap-4" style={{ justifyContent: 'space-between', width: '100%' }}>
-                <h2 className="text-lg font-black tracking-tighter text-white uppercase flex items-center gap-2">
-                  <ListFilter className="w-5 h-5 text-zinc-500" />
-                  Histórico de Transações
-                </h2>
-                <div className="bg-zinc-800 border border-zinc-700 p-2 rounded-xl shadow-lg flex items-center gap-6">
-                  <div className="flex items-center gap-2">
-                    <p className="text-[9px] text-zinc-400 uppercase font-bold">Receitas</p>
-                    <p className="text-sm font-mono font-bold text-emerald-400">{formatCurrency(filteredTotals.income)}</p>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={viewMode}
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+          transition={{ duration: 0.2 }}
+          className="flex-1 min-h-0 flex flex-col"
+        >
+          {viewMode === 'overview' ? (
+            <div className="flex-1 flex flex-col relative overflow-hidden">
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Stats Grid - Full Width */}
+                <div className="col-span-12 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <StatCard title="Receita Atual" value={stats?.totalIncome || 0} color="text-emerald-400" extra={`v/ 100%`} />
+                  <StatCard
+                    title="Gastos Totais"
+                    value={stats?.totalExpense || 0}
+                    color="text-rose-400"
+                    secondaryStats={[
+                      {
+                        label: "Obrigatórios",
+                        value: stats?.mandatoryExpense || 0,
+                        tooltip: "Soma de todos os gastos marcados como obrigatórios"
+                      },
+                      {
+                        label: "Discricionários",
+                        value: (stats?.totalExpense || 0) - (stats?.mandatoryExpense || 0),
+                        tooltip: "Gastos não obrigatórios realizados até o momento"
+                      },
+                      {
+                        label: "Diário",
+                        value: stats?.currentDailyAvg || 0,
+                        tooltip: "Média diária de gastos não obrigatórios (até hoje)"
+                      }
+                    ]}
+                  />
+                  <StatCard
+                    title="Sobra projetada"
+                    value={stats?.expectedSurplus || 0}
+                    color="text-emerald-400"
+                    highlight
+                    gradient
+                    totalEstimated={stats?.expectedDiscretionaryFuture || 0}
+                    totalEstimatedTooltip="Estimativa de gastos não obrigatórios restantes até o fim do ciclo"
+                    miniValue={stats?.partialSurplus || 0}
+                    miniValueTooltip="Quanto sobrou de fato até o momento (Receita - Despesas realizadas)"
+                  />
+                </div>
+
+                {/* Row 2: Progress + OKRs */}
+                <div className="col-span-12 lg:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Progress Card (Smaller) */}
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-lg flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                        <Calendar className="w-4 h-4 text-emerald-400" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold text-zinc-300 tracking-wider uppercase">Progresso</p>
+                        <p className="text-[9px] text-zinc-500 font-medium">{daysPassed} / {totalDays} dias</p>
+                      </div>
+                    </div>
+                    <div className="flex-1 w-full max-w-[150px]">
+                      <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400" style={{ width: `${progress}%` }} />
+                      </div>
+                    </div>
+                    <span className="text-emerald-400 font-black text-sm">{Math.round(progress)}%</span>
                   </div>
-                  <div className="w-px h-4 bg-zinc-700"></div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-[9px] text-zinc-400 uppercase font-bold">Despesas</p>
-                    <p className="text-sm font-mono font-bold text-rose-400">{formatCurrency(filteredTotals.expense)}</p>
+
+                  {/* OKRs Card */}
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-lg flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-blue-500/10 rounded-lg">
+                        <Target className="w-4 h-4 text-blue-500" />
+                      </div>
+                      <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">OKRs</h3>
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <div className="text-[9px] flex justify-between text-zinc-400 font-bold uppercase"><span>Mín</span><span>Ambi</span></div>
+                      <div className="flex gap-2">
+                        <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
+                          <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, (stats?.totalIncome - stats?.totalExpense - stats?.expectedDiscretionaryFuture) / report.okr_min * 100))}%` }} />
+                        </div>
+                        <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
+                          <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, (stats?.totalIncome - stats?.totalExpense - stats?.expectedDiscretionaryFuture) / report.okr_ambitious * 100))}%` }} />
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="w-px h-4 bg-zinc-700"></div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-[9px] text-zinc-400 uppercase font-bold">Saldo</p>
-                    <p className={`text-sm font-mono font-bold ${filteredTotals.income - filteredTotals.expense >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{formatCurrency(filteredTotals.income - filteredTotals.expense)}</p>
+                </div>
+
+                {/* Row 3: Wealth + End */}
+                <div className="col-span-12 lg:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-emerald-500/10 rounded-lg">
+                        <TrendingUp className="w-5 h-5 text-emerald-500" />
+                      </div>
+                      <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">Meta de Patrimônio</h3>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xl font-black text-emerald-500 font-mono">
+                        {formatCurrency(config?.goal_target_default || 1000000)}
+                      </span>
+                      <p className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">
+                        Estimado: <span className="text-zinc-300">{timeToGoal ? `${timeToGoal.years}a ${timeToGoal.months}m` : "---"}</span>
+                      </p>
+                    </div>
                   </div>
+
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-zinc-500/10 rounded-lg">
+                        <Flag className="w-5 h-5 text-zinc-400" />
+                      </div>
+                      <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">Fim do Relatório</h3>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xl font-black text-white font-mono">
+                        {formatCurrency(report.initial_patrimony + (stats?.expectedSurplus || 0))}
+                      </span>
+                      <p className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">Estimativa Final</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 4: AI Projection */}
+                <div className="col-span-12">
+                  <AIProjectionCard
+                    report={report}
+                    onCalculate={onCalculateProjection}
+                  />
                 </div>
               </div>
             </div>
-
-            {activeFilters.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                {activeFilters.map(f => (
-                  <div key={f.id} className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded-full px-3 py-1 shadow-sm">
-                    <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest">{f.type}:</span>
-                    <span className="text-xs font-black text-zinc-200 capitalize truncate max-w-[150px]">{f.value}</span>
-                    <button onClick={f.clear} className="text-zinc-500 hover:text-rose-400 transition-colors ml-1 p-0.5 rounded-full hover:bg-zinc-700/50">
-                      <X className="w-3 h-3" />
+          ) : viewMode === 'discretionary' ? (
+            <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl min-h-0 relative">
+              <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10 rounded-t-xl">
+                <div className="flex items-center justify-between gap-4 mb-4">
+                  <div className="flex items-center gap-4" style={{ justifyContent: 'space-between', width: '100%' }}>
+                    <h2 className="text-lg font-black tracking-tighter text-white uppercase flex items-center gap-2">
+                      <BarChart2 className="w-5 h-5 text-rose-400" />
+                      Gastos Discricionários
+                    </h2>
+                    <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all cursor-pointer">
+                      <Filter className="w-3 h-3" /> Filtrar {activeFilters.length > 0 && <span className="bg-emerald-500 text-emerald-950 px-1.5 py-0.5 rounded text-[10px]">{activeFilters.length}</span>}
                     </button>
                   </div>
-                ))}
-                <button onClick={() => { setFilterType('all'); setFilterSource('all'); setFilterCategory('all'); setFilterSupplier('all'); }} className="text-[10px] text-rose-500 hover:bg-rose-500/10 px-3 py-1 rounded-full uppercase font-bold tracking-widest transition-colors">
-                  Limpar Tudo
-                </button>
-              </div>
-            )}
-          </div>
+                </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-24">
-            <div className="space-y-4">
-              {(Object.entries(groupedTransactions) as [string, Transaction[]][]).sort((a, b) => b[0].localeCompare(a[0])).map(([date, items]) => (
-                <div key={date} className="space-y-2">
-                  <div className="sticky top-0 bg-zinc-900/90 backdrop-blur-md py-2 px-3 border border-zinc-800/50 rounded-lg z-10 mx-2">
-                    <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{formatDate(date)}</p>
-                  </div>
-                  <div className="space-y-2 pl-4 pr-2">
-                    {items.map((t: Transaction) => (
-                      <TransactionItem
-                        key={t.id}
-                        t={t}
-                        onDelete={onDeleteTransaction}
-                        onClick={() => onEditTransaction(t)}
-                        categories={categories}
-                        sources={sources}
-                        isDuplicate={potentialDuplicates.has(t.id)}
-                      />
+                {activeFilters.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 mb-4">
+                    {activeFilters.map(f => (
+                      <div key={f.id} className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded-full px-3 py-1 shadow-sm">
+                        <span className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest uppercase">{f.type}:</span>
+                        <span className="text-xs font-black text-zinc-200 capitalize uppercase">{f.value}</span> asd
+                        <button onClick={f.clear} className="text-zinc-500 hover:text-rose-400 transition-colors ml-1 p-0.5 rounded-full hover:bg-zinc-700/50 cursor-pointer">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
                     ))}
                   </div>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col p-6 pt-0">
+                <div className="flex-1 min-h-[400px] w-full flex flex-col">
+                  <div className="flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={dailyChartData} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          stroke="#52525b"
+                          fontSize={10}
+                          tickMargin={10}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          stroke="#52525b"
+                          fontSize={10}
+                          tickFormatter={(value) => `R$${value}`}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip
+                          cursor={{ fill: '#27272a' }}
+                          content={({ active, payload, label }: any) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="bg-zinc-900 border border-zinc-700 p-3 rounded-lg shadow-xl text-xs w-[240px]">
+                                  <p className="font-bold text-zinc-300 mb-2 border-b border-zinc-800 pb-2">{label}</p>
+
+                                  <div className="space-y-1 mb-3">
+                                    <p className="flex justify-between items-center text-[10px]">
+                                      <span className="text-zinc-400">Gastos Discricionários (dia):</span>
+                                      <span className="text-rose-400 font-bold">{formatCurrency(data.Despesas)}</span>
+                                    </p>
+                                  </div>
+
+                                  <div className="space-y-1 pt-2 border-t border-zinc-800">
+                                    <p className="flex justify-between items-center tracking-tight">
+                                      <span className="text-[10px] text-zinc-500 font-bold uppercase">Receita Total:</span>
+                                      <span className="text-emerald-500 font-mono text-[10px]">{formatCurrency(data.ReceitaTotal)}</span>
+                                    </p>
+                                    <p className="flex justify-between items-center tracking-tight">
+                                      <span className="text-[10px] text-zinc-500 font-bold uppercase" title="Obrigatório Total">Despesas (Obrigatórias):</span>
+                                      <span className="text-rose-500 font-mono text-[10px]">{formatCurrency(data.ObrigatorioTotal)}</span>
+                                    </p>
+                                    <p className="flex justify-between items-center tracking-tight mt-1 pt-1 border-t border-zinc-800/50">
+                                      <span className="text-[10px] text-zinc-300 font-bold uppercase">Balanço Real:</span>
+                                      <span className={`font-mono font-bold text-[10px] ${data.SobraReal >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {formatCurrency(data.SobraReal)}
+                                      </span>
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Bar dataKey="Despesas" fill="#f43f5e" radius={[4, 4, 0, 0]} name="Despesas Discricionárias" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
-              ))}
-              {Object.keys(groupedTransactions).length === 0 && (
-                <div className="flex flex-col items-center justify-center p-12 opacity-30 bg-zinc-800/20 rounded-xl border border-zinc-800/50 mx-2">
-                  <Calendar className="w-12 h-12 mb-4 text-zinc-500" />
-                  <p className="text-sm font-bold tracking-widest uppercase text-zinc-400">Sem movimentações exibidas</p>
-                </div>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          ) : viewMode === 'expenses' ? (
+            <div className="flex-1 overflow-y-auto custom-scrollbarbg-zinc-900 border border-zinc-800 rounded-xl">
+              <ExpensesView
+                transactions={report.transactions || []}
+                categories={categories}
+                sources={sources}
+                suppliers={suppliers}
+                cards={cards}
+                month={report.month}
+                year={report.year}
+                onBack={() => setViewMode('overview')}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl min-h-0 relative">
+              <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10 rounded-t-xl">
+                <div className="flex items-center justify-between gap-4 mb-4">
+                  <div className="flex items-center gap-4" style={{ justifyContent: 'space-between', width: '100%' }}>
+                    <h2 className="text-lg font-black tracking-tighter text-white uppercase flex items-center gap-2">
+                      <ListFilter className="w-5 h-5 text-zinc-500" />
+                      Histórico de Transações
+                    </h2>
+                    <div className="bg-zinc-800 border border-zinc-700 p-2 rounded-xl shadow-lg flex items-center gap-6">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[9px] text-zinc-400 uppercase font-bold">Receitas</p>
+                        <p className="text-sm font-mono font-bold text-emerald-400">{formatCurrency(filteredTotals.income)}</p>
+                      </div>
+                      <div className="w-px h-4 bg-zinc-700"></div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[9px] text-zinc-400 uppercase font-bold">Despesas</p>
+                        <p className="text-sm font-mono font-bold text-rose-400">{formatCurrency(filteredTotals.expense)}</p>
+                      </div>
+                      <div className="w-px h-4 bg-zinc-700"></div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[9px] text-zinc-400 uppercase font-bold">Saldo</p>
+                        <p className={`text-sm font-mono font-bold ${filteredTotals.income - filteredTotals.expense >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{formatCurrency(filteredTotals.income - filteredTotals.expense)}</p>
+                      </div>
+                      <div className="w-px h-4 bg-zinc-700 ml-2"></div>
+                      <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all cursor-pointer">
+                        <Filter className="w-3 h-3" /> Filtrar {activeFilters.length > 0 && <span className="bg-emerald-500 text-emerald-950 px-1.5 py-0.5 rounded text-[10px]">{activeFilters.length}</span>}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {activeFilters.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {activeFilters.map(f => (
+                      <div key={f.id} className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded-full px-3 py-1 shadow-sm">
+                        <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest uppercase">{f.type}:</span>
+                        <span className="text-xs font-black text-zinc-200 capitalize truncate max-w-[150px] uppercase">{f.value}</span>
+                        <button onClick={f.clear} className="text-zinc-500 hover:text-rose-400 transition-colors ml-1 p-0.5 rounded-full hover:bg-zinc-700/50">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    <button onClick={() => { setFilterType('all'); setFilterSource('all'); setFilterCategory('all'); setFilterSupplier('all'); }} className="text-[10px] text-rose-500 hover:bg-rose-500/10 px-3 py-1 rounded-full uppercase font-bold tracking-widest transition-colors">
+                      Limpar Tudo
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-24">
+                <div className="space-y-4">
+                  {(Object.entries(groupedTransactions) as [string, Transaction[]][]).sort((a, b) => b[0].localeCompare(a[0])).map(([date, items]) => (
+                    <div key={date} className="space-y-2">
+                      <div className="sticky top-0 bg-zinc-900/90 backdrop-blur-md py-2 px-3 border border-zinc-800/50 rounded-lg z-10 mx-2">
+                        <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{formatDate(date)}</p>
+                      </div>
+                      <div className="space-y-2 pl-4 pr-2">
+                        {items.map((t: Transaction) => (
+                          <TransactionItem
+                            key={t.id}
+                            t={t}
+                            onDelete={onDeleteTransaction}
+                            onClick={() => onEditTransaction(t)}
+                            categories={categories}
+                            sources={sources}
+                            isDuplicate={potentialDuplicates.has(t.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {Object.keys(groupedTransactions).length === 0 && (
+                    <div className="flex flex-col items-center justify-center p-12 opacity-30 bg-zinc-800/20 rounded-xl border border-zinc-800/50 mx-2">
+                      <Calendar className="w-12 h-12 mb-4 text-zinc-500" />
+                      <p className="text-sm font-bold tracking-widest uppercase text-zinc-400">Sem movimentações exibidas</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
 
       <AnimatePresence>
         {showFilterModal && (
@@ -2110,19 +2296,19 @@ function ReportView({
                   label="Fonte"
                   value={filterSource}
                   onChange={setFilterSource}
-                  options={sources.map(s => ({ value: s.id, label: s.name, icon: s.icon }))}
+                  options={availableSources}
                 />
                 <CustomSelect
                   label="Categoria"
                   value={filterCategory}
                   onChange={setFilterCategory}
-                  options={categories.map(c => ({ value: c.id, label: c.name, icon: c.icon }))}
+                  options={availableCategories}
                 />
                 <CustomSelect
                   label="Cartão"
                   value={filterCard}
                   onChange={setFilterCard}
-                  options={cards.map(c => ({ value: c.id, label: c.name, icon: 'CreditCard' }))}
+                  options={availableCards}
                 />
                 <CustomSelect
                   label="Tipo de Gasto"
@@ -2134,6 +2320,10 @@ function ReportView({
                     { value: 'discretionary', label: 'Discricionário', icon: 'Coffee' }
                   ]}
                 />
+                <div className="flex items-center gap-2 p-3 bg-zinc-800 rounded-lg border border-zinc-700 cursor-pointer" onClick={() => setFilterDuplicate(!filterDuplicate)}>
+                  <input type="checkbox" checked={filterDuplicate} readOnly className="accent-emerald-500" />
+                  <span className="text-xs font-bold text-zinc-300">Apenas Risco de Duplicidade</span>
+                </div>
               </div>
 
               <div className="mt-8 flex justify-end gap-3 pt-4 border-t border-zinc-800/50">
@@ -2145,6 +2335,7 @@ function ReportView({
                     setFilterSupplier('all');
                     setFilterCard('all');
                     setFilterMandatory('all');
+                    setFilterDuplicate(false);
                   }}
                   className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors uppercase tracking-tight"
                 >
@@ -2790,7 +2981,7 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
           <div className="space-y-1.5">
             <CustomSelect
               label="Fornecedor"
-              disabled={isSubmitting || !!transaction}
+              disabled={isSubmitting}
               value={formData.supplier_id}
               onChange={handleSupplierChange}
               options={filteredSuppliers.map((s: any) => ({
@@ -2804,7 +2995,7 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
           <div className="space-y-1.5">
             <CustomSelect
               label="Categoria"
-              disabled={isSubmitting || !formData.supplier_id || !!transaction}
+              disabled={isSubmitting || !formData.supplier_id}
               value={formData.category_id}
               onChange={val => setFormData({ ...formData, category_id: val })}
               options={filteredCategories.map((c: Category) => ({
@@ -4857,16 +5048,17 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
 
     const isOutOfBounds = activeStart && activeEnd && (tDate < activeStart || tDate > activeEnd);
 
-    // Improved duplicate detection: same value, same supplier, same source, same report
-    const isDuplicate = reports?.some((r: any) =>
-      r.transactions?.some((existing: any) => {
-        return existing.id !== t.id &&
-          Math.abs(existing.value - t.value) < 0.01 &&
-          existing.type === t.type &&
-          existing.supplier_id === t.supplier_id &&
-          existing.source_id === t.source_id &&
-          existing.report_id === t.report_id;
-      })
+    const report = reports?.find((r: any) => r.id === t.report_id);
+
+    const transactions = report?.transactions || [];
+
+    const isDuplicate = transactions.some((existing: any) =>
+      existing.id !== t.id &&
+      Math.abs(existing.value - t.value) < 0.01 &&
+      existing.type === t.type &&
+      existing.supplier_id === t.supplier_id &&
+      existing.source_id === t.source_id &&
+      existing.report_id === t.report_id
     );
 
     return isOutOfBounds || isDuplicate || t.is_potential_reversal || !t.category_id;
@@ -5029,14 +5221,23 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
             const isOutOfBounds = activeStart && activeEnd && (tDate < activeStart || tDate > activeEnd);
 
             const tSupplierKey = t.supplier_id || t.aliasName;
-            const isDuplicate = reports?.some((r: any) =>
-              r.transactions?.some((existing: any) => {
-                const existingSupplierKey = existing.supplier_id || existing.supplier_name;
-                return Math.abs(existing.value - t.value) < 0.01 &&
-                  existing.type === t.type &&
-                  existingSupplierKey === tSupplierKey;
-              })
+
+            const report = reports?.find((r: any) => r.id === t.report_id);
+
+            const transactions = report?.transactions || [];
+
+            const isDuplicate = transactions.some((existing: any) =>
+              existing.id !== t.id &&
+              Math.abs(existing.value - t.value) < 0.01 &&
+              existing.type === t.type &&
+              existing.supplier_id === t.supplier_id &&
+              existing.source_id === t.source_id &&
+              existing.report_id === t.report_id
             );
+
+            if (isDuplicate) {
+              console.log(transactions)
+            }
 
             const sourceName = sources.find((s: any) => s.id === t.source_id)?.name || "Não definida";
             const catName = categories.find((c: any) => c.id === t.category_id)?.name || "Sem categoria";
@@ -5268,35 +5469,32 @@ function ReviewItemEditModal({ transaction, categories, sources, suppliers, card
                 className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 h-[38px] focus:outline-none text-zinc-200 text-xs font-bold font-mono"
               />
             </div>
-            <div className="space-y-1.5 opacity-50">
+            <div className="space-y-1.5">
               <CustomSelect
                 label="Fonte"
-                disabled
                 value={formData.source_id}
-                onChange={() => { }}
+                onChange={val => setFormData({ ...formData, source_id: val })}
                 options={sources.map((s: any) => ({ value: s.id, label: s.name, icon: s.icon }))}
               />
             </div>
           </div>
 
           {isCardSource && (
-            <div className="space-y-1.5 pt-1 opacity-50">
+            <div className="space-y-1.5 pt-1">
               <CustomSelect
                 label="Cartão"
-                disabled
                 value={formData.card_id}
-                onChange={() => { }}
+                onChange={val => setFormData({ ...formData, card_id: val })}
                 options={cards.map((c: any) => ({ value: c.id, label: c.name, logo: c.logo }))}
               />
             </div>
           )}
 
-          <div className="space-y-1.5 opacity-50">
+          <div className="space-y-1.5 ">
             <CustomSelect
               label="Fornecedor"
-              disabled
               value={formData.supplier_id}
-              onChange={() => { }}
+              onChange={val => setFormData({ ...formData, supplier_id: val })}
               options={suppliers.map((s: any) => ({
                 value: s.id,
                 label: s.name,
