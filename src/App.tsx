@@ -1355,7 +1355,7 @@ function DashboardView({
                                                 style={{ minWidth: 100 }}
                                             >
                                                 <span className={`relative z-10 font-bold ${performanceMetric === mode ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'} uppercase`}>
-                                                    {mode === 'surplus' ? 'Sobra Atual' : mode === 'discretionary' ? 'Discricionário' : 'Obrigatório'}
+                                                    {mode === 'surplus' ? 'Sobra Atual' : mode === 'discretionary' ? 'DISCRICIONÁRIO' : 'OBRIGATÓRIO'}
                                                 </span>
                                                 {performanceMetric === mode && (
                                                     <motion.div
@@ -1409,7 +1409,7 @@ function DashboardView({
                                             }}
                                         />
                                         <Area
-                                            name={performanceMetric === 'fixed' ? 'Gasto Obrigatório' : performanceMetric === 'discretionary' ? 'Gasto Discricionário' : 'Sobra Atual'}
+                                            name={performanceMetric === 'fixed' ? 'GASTO OBRIGATÓRIO' : performanceMetric === 'discretionary' ? 'GASTO DISCRICIONÁRIO' : 'SOBRA ATUAL'}
                                             type="monotone"
                                             dataKey={performanceMetric}
                                             stroke="#64748b"
@@ -1614,14 +1614,30 @@ function ReportView({
     const stats = activeReportStats;
     const [viewMode, setViewMode] = useState<"overview" | "transactions" | "expenses" | "discretionary">("overview");
 
-    const [filterType, setFilterType] = useState<string | null>(null);
-    const [filterSource, setFilterSource] = useState<string | null>(null);
-    const [filterCategory, setFilterCategory] = useState<string | null>(null);
-    const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
-    const [filterCard, setFilterCard] = useState<string | null>(null);
-    const [filterMandatory, setFilterMandatory] = useState<string | null>(null);
+    const [filterType, setFilterType] = useState<string[]>([]);
+    const [filterSource, setFilterSource] = useState<string[]>([]);
+    const [filterCategory, setFilterCategory] = useState<string[]>([]);
+    const [filterSupplier, setFilterSupplier] = useState<string[]>([]);
+    const [filterCard, setFilterCard] = useState<string[]>([]);
+    const [filterMandatory, setFilterMandatory] = useState<string[]>([]);
+    const [filterOccurrence, setFilterOccurrence] = useState<string[]>([]);
+    const [filterStartDate, setFilterStartDate] = useState<string>("");
+    const [filterEndDate, setFilterEndDate] = useState<string>("");
     const [showFilterModal, setShowFilterModal] = useState(false);
     const [filterDuplicate, setFilterDuplicate] = useState<boolean>(false);
+
+    const clearFilters = () => {
+        setFilterType([]);
+        setFilterSource([]);
+        setFilterCategory([]);
+        setFilterSupplier([]);
+        setFilterCard([]);
+        setFilterMandatory([]);
+        setFilterOccurrence([]);
+        setFilterStartDate("");
+        setFilterEndDate("");
+        setFilterDuplicate(false);
+    };
 
     const availableCategories = useMemo(() => {
         const ids = new Set(report.transactions?.map((t: any) => t.category_id || (t.categories && t.categories[0])));
@@ -1670,22 +1686,36 @@ function ReportView({
     const filteredTransactionsList = useMemo(() => {
         if (!report?.transactions) return [];
         return report.transactions.filter(t => {
-            if (filterType && t.type !== filterType) return false;
-            if (filterSource && t.source_id !== filterSource) return false;
-            if (filterSupplier && t.supplier_id !== filterSupplier) return false;
-            if (filterCard && t.card_id !== filterCard) return false;
+            if (filterType.length > 0 && !filterType.includes(t.type)) return false;
+            if (filterSource.length > 0 && !filterSource.includes(t.source_id)) return false;
+            if (filterSupplier.length > 0 && !filterSupplier.includes(t.supplier_id)) return false;
+            if (filterCard.length > 0 && !filterCard.includes(t.card_id)) return false;
             if (filterDuplicate && !potentialDuplicates.has(t.id)) return false;
-            if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
-            if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
-            if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
+
+            if (filterMandatory.length > 0) {
+                const isMandatory = t.is_mandatory;
+                const selected = filterMandatory;
+                if (selected.includes('mandatory') && !selected.includes('discretionary') && !isMandatory) return false;
+                if (selected.includes('discretionary') && !selected.includes('mandatory') && isMandatory) return false;
+            }
+
+            if (filterOccurrence.length > 0) {
+                const isRecurring = t.is_recurring;
+                const selected = filterOccurrence;
+                if (selected.includes('recurring') && !selected.includes('occasional') && !isRecurring) return false;
+                if (selected.includes('occasional') && !selected.includes('recurring') && isRecurring) return false;
+            }
 
             let catId = t.category_id;
             if (!catId && (t as any).categories && (t as any).categories.length > 0) catId = (t as any).categories[0];
-            if (filterCategory && catId !== filterCategory) return false;
+            if (filterCategory.length > 0 && !filterCategory.includes(catId)) return false;
+
+            if (filterStartDate && t.date < filterStartDate) return false;
+            if (filterEndDate && t.date > filterEndDate) return false;
 
             return true;
         });
-    }, [report?.transactions, filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, filterDuplicate, potentialDuplicates]);
+    }, [report?.transactions, filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, filterOccurrence, filterDuplicate, filterStartDate, filterEndDate, potentialDuplicates]);
 
     const dailyChartData = useMemo(() => {
         if (!report?.transactions || !report.start_date || !report.end_date) return [];
@@ -1715,7 +1745,7 @@ function ReportView({
             if (t.type === 'income') {
                 totalIncome += t.value;
             }
-            if (t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)) {
+            if (t.type === 'expense' && t.is_mandatory) {
                 totalMandatory += t.value;
             }
         });
@@ -1735,7 +1765,7 @@ function ReportView({
                 if (t.date === dayString) {
                     if (t.type === 'expense') {
                         expense += t.value;
-                        if (!t.is_mandatory && !t.is_non_recurring_mandatory) {
+                        if (!t.is_mandatory) {
                             discretionary += t.value;
                         }
                     }
@@ -1759,34 +1789,32 @@ function ReportView({
         return data;
     }, [report, filteredTransactionsList]);
 
-    const filteredTotals = useMemo(() => {
-        let income = 0;
-        let expense = 0;
-        filteredTransactionsList.forEach(t => {
-            if (t.type === 'income') income += t.value;
-            else if (t.type === 'expense') expense += t.value;
-        });
-        return { income, expense };
-    }, [filteredTransactionsList]);
-
     const activeFilters = useMemo(() => {
         const filters = [];
-        if (filterType) filters.push({ id: 'type', type: 'Tipo', value: filterType === 'income' ? 'Receita' : 'Despesa', clear: () => setFilterType(null) });
-        if (filterSource) filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource(null) });
-        if (filterCategory) filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory(null) });
-        if (filterSupplier) filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier(null) });
-        if (filterCard) filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard(null) });
+        if (filterType.length > 0) filters.push({ id: 'type', type: 'Tipo', value: filterType.map(v => v === 'income' ? 'Receita' : 'Despesa').join(', '), clear: () => setFilterType([]) });
+        if (filterSource.length > 0) filters.push({ id: 'source', type: 'Fonte', value: filterSource.map(id => sources.find(s => s.id === id)?.name || 'Desconhecida').join(', '), clear: () => setFilterSource([]) });
+        if (filterCategory.length > 0) filters.push({ id: 'category', type: 'Categoria', value: filterCategory.map(id => categories.find(c => c.id === id)?.name || 'Desconhecida').join(', '), clear: () => setFilterCategory([]) });
+        if (filterSupplier.length > 0) filters.push({ id: 'supplier', type: 'Fornecedor', value: filterSupplier.map(id => suppliers.find(s => s.id === id)?.name || 'Desconhecido').join(', '), clear: () => setFilterSupplier([]) });
+        if (filterCard.length > 0) filters.push({ id: 'card', type: 'Cartão', value: filterCard.map(id => cards.find(c => c.id === id)?.name || 'Desconhecido').join(', '), clear: () => setFilterCard([]) });
         if (filterDuplicate) filters.push({ id: 'duplicate', type: 'Filtro', value: 'Risco de duplicidade', clear: () => setFilterDuplicate(false) });
-        if (filterMandatory) {
+        if (filterMandatory.length > 0) {
             const labels: Record<string, string> = {
-                'mandatory': 'Obrigatório (Recorrente)',
-                'non_recurring_mandatory': 'Obrigatório (Não recorrente)',
-                'discretionary': 'Discricionário'
+                'mandatory': 'OBRIGATÓRIO',
+                'discretionary': 'DISCRICIONÁRIO'
             };
-            filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: labels[filterMandatory], clear: () => setFilterMandatory(null) });
+            filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: filterMandatory.map(v => labels[v]).join(', '), clear: () => setFilterMandatory([]) });
         }
+        if (filterOccurrence.length > 0) {
+            const labels: Record<string, string> = {
+                'recurring': 'Recorrente',
+                'occasional': 'Ocasional'
+            };
+            filters.push({ id: 'occurrence', type: 'Tipo Ocorrência', value: filterOccurrence.map(v => labels[v]).join(', '), clear: () => setFilterOccurrence([]) });
+        }
+        if (filterStartDate) filters.push({ id: 'filterStartDate', type: 'Início', value: filterStartDate, clear: () => setFilterStartDate("") });
+        if (filterEndDate) filters.push({ id: 'filterEndDate', type: 'Fim', value: filterEndDate, clear: () => setFilterEndDate("") });
         return filters;
-    }, [filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, filterDuplicate, sources, categories, suppliers, cards]);
+    }, [filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, filterOccurrence, filterDuplicate, filterStartDate, filterEndDate, sources, categories, suppliers, cards]);
 
     const groupedTransactions = useMemo(() => {
         if (!report || !report.transactions) return {};
@@ -1839,6 +1867,37 @@ function ReportView({
             daysPassed
         };
     }, [report?.start_date, report?.end_date, report?.transactions, report?.okr_min, report?.okr_ambitious]);
+
+    const { dailySpentValues, dailySpentMode } = useFinancial();
+
+    const filteredStats = useMemo(() => {
+        const ts = filteredTransactionsList;
+        const allKnownIncome = ts.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.value), 0);
+        const allKnownExpenses = ts.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.value), 0);
+        const allMandatoryExpense = ts.filter(t => t.type === 'expense' && t.is_mandatory).reduce((acc, t) => acc + Number(t.value), 0);
+
+        const totalDiscretionary = allKnownExpenses - allMandatoryExpense;
+        const currentDailyAvg = daysPassed > 0 ? totalDiscretionary / daysPassed : 0;
+
+        let dailyBase = dailySpentValues.historical;
+        if (dailySpentMode === 'current') dailyBase = currentDailyAvg;
+        if (dailySpentMode === 'default') dailyBase = config?.daily_spent_estimate_default || 0;
+
+        const projectedVariableExpense = daysLeft * dailyBase;
+        const expectedSurplus = allKnownIncome - allKnownExpenses - projectedVariableExpense;
+        const partialSurplus = allKnownIncome - allKnownExpenses;
+
+        return {
+            currentDailyAvg,
+            expectedSurplus,
+            partialSurplus,
+            totalIncome: allKnownIncome,
+            totalExpense: allKnownExpenses,
+            mandatoryExpense: allMandatoryExpense,
+            expectedDiscretionaryFuture: projectedVariableExpense,
+            daysRemaining: daysLeft
+        };
+    }, [filteredTransactionsList, daysPassed, daysLeft, dailySpentValues, dailySpentMode, config]);
 
     if (!report) return null;
 
@@ -1943,38 +2002,38 @@ function ReportView({
                             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
                                 {/* Stats Grid - Full Width */}
                                 <div className="col-span-12 grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    <StatCard title="Receita Atual" value={stats?.totalIncome || 0} color="text-emerald-400" extra={`v/ 100%`} />
+                                    <StatCard title="Receita Atual" value={activeReportStats?.totalIncome || 0} color="text-emerald-400" extra={`v/ 100%`} />
                                     <StatCard
                                         title="Gastos Totais"
-                                        value={stats?.totalExpense || 0}
+                                        value={activeReportStats?.totalExpense || 0}
                                         color="text-rose-400"
                                         secondaryStats={[
                                             {
                                                 label: "Obrigatórios",
-                                                value: stats?.mandatoryExpense || 0,
+                                                value: activeReportStats?.mandatoryExpense || 0,
                                                 tooltip: "Soma de todos os gastos marcados como obrigatórios"
                                             },
                                             {
                                                 label: "Discricionários",
-                                                value: (stats?.totalExpense || 0) - (stats?.mandatoryExpense || 0),
+                                                value: (activeReportStats?.totalExpense || 0) - (activeReportStats?.mandatoryExpense || 0),
                                                 tooltip: "Gastos não obrigatórios realizados até o momento"
                                             },
                                             {
                                                 label: "Diário",
-                                                value: stats?.currentDailyAvg || 0,
+                                                value: activeReportStats?.currentDailyAvg || 0,
                                                 tooltip: "Média diária de gastos não obrigatórios (até hoje)"
                                             }
                                         ]}
                                     />
                                     <StatCard
                                         title="Sobra projetada"
-                                        value={stats?.expectedSurplus || 0}
+                                        value={activeReportStats?.expectedSurplus || 0}
                                         color="text-emerald-400"
                                         highlight
                                         gradient
-                                        totalEstimated={stats?.expectedDiscretionaryFuture || 0}
+                                        totalEstimated={activeReportStats?.expectedDiscretionaryFuture || 0}
                                         totalEstimatedTooltip="Estimativa de gastos não obrigatórios restantes até o fim do ciclo"
-                                        miniValue={stats?.partialSurplus || 0}
+                                        miniValue={activeReportStats?.partialSurplus || 0}
                                         miniValueTooltip="Quanto sobrou de fato até o momento (Receita - Despesas realizadas)"
                                     />
                                 </div>
@@ -2012,10 +2071,10 @@ function ReportView({
                                             <div className="text-[9px] flex justify-between text-zinc-400 font-bold uppercase"><span>Mín</span><span>Ambi</span></div>
                                             <div className="flex gap-2">
                                                 <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
-                                                    <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, (stats?.totalIncome - stats?.totalExpense - stats?.expectedDiscretionaryFuture) / report.okr_min * 100))}%` }} />
+                                                    <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, (activeReportStats?.totalIncome - activeReportStats?.totalExpense - activeReportStats?.expectedDiscretionaryFuture) / report.okr_min * 100))}%` }} />
                                                 </div>
                                                 <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
-                                                    <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, (stats?.totalIncome - stats?.totalExpense - stats?.expectedDiscretionaryFuture) / report.okr_ambitious * 100))}%` }} />
+                                                    <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, (activeReportStats?.totalIncome - activeReportStats?.totalExpense - activeReportStats?.expectedDiscretionaryFuture) / report.okr_ambitious * 100))}%` }} />
                                                 </div>
                                             </div>
                                         </div>
@@ -2050,7 +2109,7 @@ function ReportView({
                                         </div>
                                         <div className="text-right">
                                             <span className="text-xl font-black text-white font-mono">
-                                                {formatCurrency(report.initial_patrimony + (stats?.expectedSurplus || 0))}
+                                                {formatCurrency(report.initial_patrimony + (activeReportStats?.expectedSurplus || 0))}
                                             </span>
                                             <p className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">Estimativa Final</p>
                                         </div>
@@ -2086,13 +2145,17 @@ function ReportView({
                                         {activeFilters.map(f => (
                                             <div key={f.id} className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded-full px-3 py-1 shadow-sm">
                                                 <span className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest uppercase">{f.type}:</span>
-                                                <span className="text-xs font-black text-zinc-200 capitalize uppercase">{f.value}</span> asd
+                                                <span className="text-xs font-black text-zinc-200 capitalize uppercase">{f.value}</span>
                                                 <button onClick={f.clear} className="text-zinc-500 hover:text-rose-400 transition-colors ml-1 p-0.5 rounded-full hover:bg-zinc-700/50 cursor-pointer">
                                                     <X className="w-3 h-3" />
                                                 </button>
                                             </div>
                                         ))}
+                                        <button onClick={clearFilters} className="text-[10px] text-rose-500 hover:bg-rose-500/10 px-3 py-1 rounded-full uppercase font-bold tracking-widest transition-colors">
+                                            Limpar Tudo
+                                        </button>
                                     </div>
+
                                 )}
                             </div>
 
@@ -2139,7 +2202,7 @@ function ReportView({
                                                                             <span className="text-emerald-500 font-mono text-[10px]">{formatCurrency(data.ReceitaTotal)}</span>
                                                                         </p>
                                                                         <p className="flex justify-between items-center tracking-tight">
-                                                                            <span className="text-[10px] text-zinc-500 font-bold uppercase" title="Obrigatório Total">Despesas (Obrigatórias):</span>
+                                                                            <span className="text-[10px] text-zinc-500 font-bold uppercase">Despesas (Obrigatórias):</span>
                                                                             <span className="text-rose-500 font-mono text-[10px]">{formatCurrency(data.ObrigatorioTotal)}</span>
                                                                         </p>
                                                                         <p className="flex justify-between items-center tracking-tight mt-1 pt-1 border-t border-zinc-800/50">
@@ -2173,6 +2236,22 @@ function ReportView({
                                 month={report.month}
                                 year={report.year}
                                 onBack={() => setViewMode('overview')}
+                                filterCategory={filterCategory}
+                                setFilterCategory={setFilterCategory}
+                                filterSource={filterSource}
+                                setFilterSource={setFilterSource}
+                                filterSupplier={filterSupplier}
+                                setFilterSupplier={setFilterSupplier}
+                                filterCard={filterCard}
+                                setFilterCard={setFilterCard}
+                                filterMandatory={filterMandatory}
+                                setFilterMandatory={setFilterMandatory}
+                                startDate={filterStartDate}
+                                setStartDate={setFilterStartDate}
+                                endDate={filterEndDate}
+                                setEndDate={setFilterEndDate}
+                                filterOccurrence={filterOccurrence}
+                                setFilterOccurrence={setFilterOccurrence}
                             />
                         </div>
                     ) : (
@@ -2187,17 +2266,17 @@ function ReportView({
                                         <div className="bg-zinc-800 border border-zinc-700 p-2 rounded-xl shadow-lg flex items-center gap-6">
                                             <div className="flex items-center gap-2">
                                                 <p className="text-[9px] text-zinc-400 uppercase font-bold">Receitas</p>
-                                                <p className="text-sm font-mono font-bold text-emerald-400">{formatCurrency(filteredTotals.income)}</p>
+                                                <p className="text-sm font-mono font-bold text-emerald-400">{formatCurrency(filteredStats.totalIncome)}</p>
                                             </div>
                                             <div className="w-px h-4 bg-zinc-700"></div>
                                             <div className="flex items-center gap-2">
                                                 <p className="text-[9px] text-zinc-400 uppercase font-bold">Despesas</p>
-                                                <p className="text-sm font-mono font-bold text-rose-400">{formatCurrency(filteredTotals.expense)}</p>
+                                                <p className="text-sm font-mono font-bold text-rose-400">{formatCurrency(filteredStats.totalExpense)}</p>
                                             </div>
                                             <div className="w-px h-4 bg-zinc-700"></div>
                                             <div className="flex items-center gap-2">
                                                 <p className="text-[9px] text-zinc-400 uppercase font-bold">Saldo</p>
-                                                <p className={`text-sm font-mono font-bold ${filteredTotals.income - filteredTotals.expense >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{formatCurrency(filteredTotals.income - filteredTotals.expense)}</p>
+                                                <p className={`text-sm font-mono font-bold ${filteredStats.totalIncome - filteredStats.totalExpense >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{formatCurrency(filteredStats.totalIncome - filteredStats.totalExpense)}</p>
                                             </div>
                                             <div className="w-px h-4 bg-zinc-700 ml-2"></div>
                                             <button onClick={() => setShowFilterModal(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-tight flex items-center gap-2 transition-all cursor-pointer">
@@ -2218,7 +2297,7 @@ function ReportView({
                                                 </button>
                                             </div>
                                         ))}
-                                        <button onClick={() => { setFilterType('all'); setFilterSource('all'); setFilterCategory('all'); setFilterSupplier('all'); }} className="text-[10px] text-rose-500 hover:bg-rose-500/10 px-3 py-1 rounded-full uppercase font-bold tracking-widest transition-colors">
+                                        <button onClick={clearFilters} className="text-[10px] text-rose-500 hover:bg-rose-500/10 px-3 py-1 rounded-full uppercase font-bold tracking-widest transition-colors">
                                             Limpar Tudo
                                         </button>
                                     </div>
@@ -2248,9 +2327,22 @@ function ReportView({
                                         </div>
                                     ))}
                                     {Object.keys(groupedTransactions).length === 0 && (
-                                        <div className="flex flex-col items-center justify-center p-12 opacity-30 bg-zinc-800/20 rounded-xl border border-zinc-800/50 mx-2">
-                                            <Calendar className="w-12 h-12 mb-4 text-zinc-500" />
-                                            <p className="text-sm font-bold tracking-widest uppercase text-zinc-400">Sem movimentações exibidas</p>
+                                        <div className="flex items-center justify-center p-12">
+                                            <div className="bg-zinc-800/30 border border-zinc-800/50 rounded-2xl p-12 text-center max-w-sm flex flex-col items-center gap-4">
+                                                <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                                                    <ListFilter className="w-8 h-8 text-zinc-600" />
+                                                </div>
+                                                <h3 className="text-white font-black uppercase tracking-tighter text-lg">Nenhuma transação encontrada</h3>
+                                                <p className="text-zinc-500 text-xs font-medium leading-relaxed">
+                                                    Não encontramos transações que correspondam aos filtros aplicados para este período.
+                                                </p>
+                                                <button
+                                                    onClick={clearFilters}
+                                                    className="mt-4 px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-95 border border-zinc-700 pointer-events-auto"
+                                                >
+                                                    Limpar Filtros
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
@@ -2288,36 +2380,57 @@ function ReportView({
                             <div className="space-y-4">
                                 <CustomSelect
                                     label="Tipo de Transação"
+                                    multiple
                                     value={filterType}
                                     onChange={setFilterType}
                                     options={[{ value: 'expense', label: 'Despesa', icon: 'ArrowDownCircle' }, { value: 'income', label: 'Receita', icon: 'ArrowUpCircle' }]}
                                 />
                                 <CustomSelect
                                     label="Fonte"
+                                    multiple
                                     value={filterSource}
                                     onChange={setFilterSource}
                                     options={availableSources}
                                 />
                                 <CustomSelect
                                     label="Categoria"
+                                    multiple
                                     value={filterCategory}
                                     onChange={setFilterCategory}
                                     options={availableCategories}
                                 />
                                 <CustomSelect
+                                    label="Fornecedor"
+                                    multiple
+                                    value={filterSupplier}
+                                    onChange={setFilterSupplier}
+                                    options={availableSuppliers}
+                                />
+                                <CustomSelect
                                     label="Cartão"
+                                    multiple
                                     value={filterCard}
                                     onChange={setFilterCard}
                                     options={availableCards}
                                 />
                                 <CustomSelect
                                     label="Tipo de Gasto"
+                                    multiple
                                     value={filterMandatory}
                                     onChange={setFilterMandatory}
                                     options={[
-                                        { value: 'mandatory', label: 'Obrigatório (Recorrente)', icon: 'AlertCircle' },
-                                        { value: 'non_recurring_mandatory', label: 'Obrigatório (Não recorrente)', icon: 'AlertCircle' },
-                                        { value: 'discretionary', label: 'Discricionário', icon: 'Coffee' }
+                                        { value: 'mandatory', label: 'OBRIGATÓRIO', icon: 'AlertCircle' },
+                                        { value: 'discretionary', label: 'DISCRICIONÁRIO', icon: 'Coffee' }
+                                    ]}
+                                />
+                                <CustomSelect
+                                    label="Ocorrência"
+                                    multiple
+                                    value={filterOccurrence}
+                                    onChange={setFilterOccurrence}
+                                    options={[
+                                        { value: 'occasional', label: 'Ocasional', icon: 'Calendar' },
+                                        { value: 'recurring', label: 'Recorrente', icon: 'Repeat' }
                                     ]}
                                 />
                                 <div className="flex items-center gap-2 p-3 bg-zinc-800 rounded-lg border border-zinc-700 cursor-pointer" onClick={() => setFilterDuplicate(!filterDuplicate)}>
@@ -2326,17 +2439,30 @@ function ReportView({
                                 </div>
                             </div>
 
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Início</label>
+                                    <input
+                                        type="date"
+                                        value={filterStartDate}
+                                        onChange={e => setFilterStartDate(e.target.value)}
+                                        className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 text-zinc-200 text-xs focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Fim</label>
+                                    <input
+                                        type="date"
+                                        value={filterEndDate}
+                                        onChange={e => setFilterEndDate(e.target.value)}
+                                        className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 text-zinc-200 text-xs focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                                    />
+                                </div>
+                            </div>
+
                             <div className="mt-8 flex justify-end gap-3 pt-4 border-t border-zinc-800/50">
                                 <button
-                                    onClick={() => {
-                                        setFilterType('all');
-                                        setFilterSource('all');
-                                        setFilterCategory('all');
-                                        setFilterSupplier('all');
-                                        setFilterCard('all');
-                                        setFilterMandatory('all');
-                                        setFilterDuplicate(false);
-                                    }}
+                                    onClick={clearFilters}
                                     className="px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors uppercase tracking-tight"
                                 >
                                     Limpar Todos
@@ -2609,16 +2735,32 @@ function TransactionItem({ t, onDelete, onClick, categories, sources, isDuplicat
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
                     <p className="text-[11px] font-black tracking-tight text-white uppercase truncate">{t.supplier_name || catNames || "Geral"}</p>
-                    {!!t.is_mandatory && (
+                    {!!t.is_mandatory && !t.is_recurring && (
                         <div className="px-1 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-[6px] font-black tracking-widest leading-none">
-                            OBR
+                            OBRIGATÓRIO
                         </div>
                     )}
-                    {!!t.is_non_recurring_mandatory && (
-                        <div className="px-1 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[6px] font-black tracking-widest leading-none">
-                            NR-OBR
+                    {t.type === 'expense' && !t.is_mandatory && (
+                        <div className="px-1 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+                            DISCRICIONÁRIO
                         </div>
                     )}
+                    {!!t.is_mandatory && !!t.is_recurring && (
+                        <div className="px-1 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+                            {(t.remaining_recurrence !== null && (t.remaining_recurrence ?? 0) > 0) ? `FIXO (${t.remaining_recurrence})` : 'FIXO'}
+                        </div>
+                    )}
+                    {!!t.is_recurring && t.type === 'expense' && !(!!t.is_mandatory && !!t.is_recurring) && (
+                        <div className="px-1 py-0.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+                            {(t.remaining_recurrence !== null && (t.remaining_recurrence ?? 0) > 0) ? `RECORRENTE (${t.remaining_recurrence})` : 'RECORRENTE'}
+                        </div>
+                    )}
+                    {!t.is_recurring && t.type === 'expense' && (
+                        <div className="px-1 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+                            OCASIONAL
+                        </div>
+                    )}
+
                     {isDuplicate && (
                         <div className="flex items-center gap-0.5 px-1 py-0.5 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded text-[6px] font-black tracking-widest leading-none" title="Possível transação duplicada (mesmo valor e fornecedor)">
                             <AlertTriangle className="w-2 h-2" />
@@ -2840,7 +2982,8 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
         category_id: transaction?.category_id || (transaction?.categories?.length > 0 ? transaction.categories[0] : (preSelectedCategories.length > 0 ? preSelectedCategories[0] : null)),
         date: transaction?.date || new Date().toISOString().split("T")[0],
         is_mandatory: transaction?.is_mandatory || false,
-        is_non_recurring_mandatory: transaction?.is_non_recurring_mandatory || false
+        is_recurring: transaction ? !!transaction.is_recurring : false,
+        remaining_recurrence: transaction?.remaining_recurrence || "",
     });
 
     const isCardSource = sources.find((s: any) => s.id === formData.source_id)?.name === "CARTÃO";
@@ -3007,22 +3150,50 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                     </div>
 
                     {formData.type === 'expense' && (
-                        <div className="space-y-1.5">
+                        <div className="space-y-4">
                             <CustomSelect
                                 label="Tipo de Despesa"
                                 disabled={isSubmitting}
-                                value={formData.is_mandatory ? 'mandatory' : formData.is_non_recurring_mandatory ? 'non_recurring_mandatory' : 'discretionary'}
+                                value={formData.is_mandatory ? 'mandatory' : 'discretionary'}
                                 onChange={val => setFormData({
                                     ...formData,
-                                    is_mandatory: val === 'mandatory',
-                                    is_non_recurring_mandatory: val === 'non_recurring_mandatory'
+                                    is_mandatory: val === 'mandatory'
                                 })}
                                 options={[
-                                    { value: 'discretionary', label: 'Discricionário' },
-                                    { value: 'mandatory', label: 'Obrigatório (Recorrente)' },
-                                    { value: 'non_recurring_mandatory', label: 'Obrigatório (Não recorrente)' }
+                                    { value: 'mandatory', label: 'OBRIGATÓRIO' },
+                                    { value: 'discretionary', label: 'DISCRICIONÁRIO' }
                                 ]}
                             />
+
+                            <CustomSelect
+                                label="Tipo de Ocorrência"
+                                disabled={isSubmitting}
+                                value={formData.is_recurring ? 'recurring' : 'occasional'}
+                                onChange={val => setFormData({
+                                    ...formData,
+                                    is_recurring: val === 'recurring',
+                                    remaining_recurrence: val === 'recurring' ? formData.remaining_recurrence : ""
+                                })}
+                                options={[
+                                    { value: 'occasional', label: 'OCASIONAL' },
+                                    { value: 'recurring', label: 'RECORRENTE' }
+                                ]}
+                            />
+
+                            {formData.is_recurring && (
+                                <div className="space-y-1.5 w-full">
+                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest block pl-1 text-center">Ocorrências Restantes</label>
+                                    <input
+                                        type="number"
+                                        value={formData.remaining_recurrence}
+                                        onChange={e => setFormData({ ...formData, remaining_recurrence: e.target.value })}
+                                        placeholder="Indefinido"
+                                        disabled={isSubmitting}
+                                        className="w-full bg-[#18181b] border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-center text-white placeholder-zinc-700 outline-none focus:border-zinc-500 transition-colors"
+                                    />
+                                    <p className="text-[10px] text-zinc-600 pl-1 text-center mt-1">Deixe vazio se for indefinido</p>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -5116,7 +5287,9 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
             card_id: t.card_id,
             date: t.date,
             category_id: t.category_id,
-            is_mandatory: t.is_mandatory,
+            is_mandatory: !!t.is_mandatory,
+            is_recurring: !!t.is_recurring,
+            remaining_recurrence: t.remaining_recurrence !== undefined ? t.remaining_recurrence : null,
             supplier_id: t.supplier_id,
             alias: { name: t.aliasName, category_id: t.category_id }
         }));
@@ -5234,10 +5407,6 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
                             existing.source_id === t.source_id &&
                             existing.report_id === t.report_id
                         );
-
-                        if (isDuplicate) {
-                            console.log(transactions)
-                        }
 
                         const sourceName = sources.find((s: any) => s.id === t.source_id)?.name || "Não definida";
                         const catName = categories.find((c: any) => c.id === t.category_id)?.name || "Sem categoria";

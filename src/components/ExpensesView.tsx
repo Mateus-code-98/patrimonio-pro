@@ -22,6 +22,22 @@ export const ExpensesView = ({
     month,
     year,
     onBack,
+    filterCategory,
+    setFilterCategory,
+    filterSource,
+    setFilterSource,
+    filterSupplier,
+    setFilterSupplier,
+    filterCard,
+    setFilterCard,
+    filterMandatory,
+    setFilterMandatory,
+    startDate,
+    setStartDate,
+    endDate,
+    setEndDate,
+    filterOccurrence,
+    setFilterOccurrence,
 }: {
     transactions: Transaction[];
     categories: Category[];
@@ -31,14 +47,23 @@ export const ExpensesView = ({
     month: number;
     year: number;
     onBack: () => void;
+    filterCategory: string[];
+    setFilterCategory: (ids: string[]) => void;
+    filterSource: string[];
+    setFilterSource: (ids: string[]) => void;
+    filterSupplier: string[];
+    setFilterSupplier: (ids: string[]) => void;
+    filterCard: string[];
+    setFilterCard: (ids: string[]) => void;
+    filterMandatory: string[];
+    setFilterMandatory: (ids: string[]) => void;
+    startDate: string;
+    setStartDate: (s: string) => void;
+    endDate: string;
+    setEndDate: (s: string) => void;
+    filterOccurrence: string[];
+    setFilterOccurrence: (v: string[]) => void;
 }) => {
-    const [filterCategory, setFilterCategory] = useState<string | null>(null);
-    const [filterSource, setFilterSource] = useState<string | null>(null);
-    const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
-    const [filterCard, setFilterCard] = useState<string | null>(null);
-    const [filterMandatory, setFilterMandatory] = useState<string | null>(null);
-    const [startDate, setStartDate] = useState<string>("");
-    const [endDate, setEndDate] = useState<string>("");
     const [showFilterModal, setShowFilterModal] = useState(false);
 
     const availableCategories = useMemo(() => {
@@ -62,9 +87,8 @@ export const ExpensesView = ({
     }, [transactions, cards]);
 
     const TYPE_LABELS: Record<string, string> = {
-        'mandatory': 'Obrigatório (Recorrente)',
-        'non_recurring_mandatory': 'Obrigatório (Não recorrente)',
-        'discretionary': 'Discricionário'
+        'mandatory': 'OBRIGATÓRIO',
+        'discretionary': 'DISCRICIONÁRIO'
     };
 
     const MONTH_NAMES = [
@@ -74,37 +98,50 @@ export const ExpensesView = ({
 
     const activeFilters = useMemo(() => {
         const filters = [];
-        if (filterCategory) filters.push({ id: 'category', type: 'Categoria', value: categories.find(c => c.id === filterCategory)?.name || 'Desconhecida', clear: () => setFilterCategory(null) });
-        if (filterSource) filters.push({ id: 'source', type: 'Fonte', value: sources.find(s => s.id === filterSource)?.name || 'Desconhecida', clear: () => setFilterSource(null) });
-        if (filterSupplier) filters.push({ id: 'supplier', type: 'Fornecedor', value: suppliers.find(s => s.id === filterSupplier)?.name || 'Desconhecido', clear: () => setFilterSupplier(null) });
-        if (filterCard) filters.push({ id: 'card', type: 'Cartão', value: cards.find(c => c.id === filterCard)?.name || 'Desconhecido', clear: () => setFilterCard(null) });
-        if (filterMandatory) filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: TYPE_LABELS[filterMandatory], clear: () => setFilterMandatory(null) });
+        if (filterCategory.length > 0) filters.push({ id: 'category', type: 'Categoria', value: filterCategory.map(id => categories.find(c => c.id === id)?.name || 'Desconhecida').join(', '), clear: () => setFilterCategory([]) });
+        if (filterSource.length > 0) filters.push({ id: 'source', type: 'Fonte', value: filterSource.map(id => sources.find(s => s.id === id)?.name || 'Desconhecida').join(', '), clear: () => setFilterSource([]) });
+        if (filterSupplier.length > 0) filters.push({ id: 'supplier', type: 'Fornecedor', value: filterSupplier.map(id => suppliers.find(s => s.id === id)?.name || 'Desconhecido').join(', '), clear: () => setFilterSupplier([]) });
+        if (filterCard.length > 0) filters.push({ id: 'card', type: 'Cartão', value: filterCard.map(id => cards.find(c => c.id === id)?.name || 'Desconhecido').join(', '), clear: () => setFilterCard([]) });
+        if (filterMandatory.length > 0) filters.push({ id: 'mandatory', type: 'Tipo Gasto', value: filterMandatory.map(v => TYPE_LABELS[v]).join(', '), clear: () => setFilterMandatory([]) });
+        if (filterOccurrence.length > 0) {
+            const labels: Record<string, string> = { 'recurring': 'Recorrente', 'occasional': 'Ocasional' };
+            filters.push({ id: 'occurrence', type: 'Ocorrência', value: filterOccurrence.map(v => labels[v]).join(', '), clear: () => setFilterOccurrence([]) });
+        }
         if (startDate) filters.push({ id: 'startDate', type: 'Início', value: startDate, clear: () => setStartDate('') });
         if (endDate) filters.push({ id: 'endDate', type: 'Fim', value: endDate, clear: () => setEndDate('') });
         return filters;
-    }, [filterCategory, filterSource, filterSupplier, filterCard, filterMandatory, startDate, endDate, categories, sources, suppliers, cards]);
+    }, [filterCategory, filterSource, filterSupplier, filterCard, filterMandatory, filterOccurrence, startDate, endDate, categories, sources, suppliers, cards]);
 
     const clearFilters = () => {
-        setFilterCategory(null);
-        setFilterSource(null);
-        setFilterSupplier(null);
-        setFilterCard(null);
-        setFilterMandatory(null);
+        setFilterCategory([]);
+        setFilterSource([]);
+        setFilterSupplier([]);
+        setFilterCard([]);
+        setFilterMandatory([]);
+        setFilterOccurrence([]);
         setStartDate("");
         setEndDate("");
     };
 
     const filtered = useMemo(() => {
         return transactions.filter(t => {
-            if (filterCategory && (t.category_id !== filterCategory)) return false;
-            if (filterSource && t.source_id !== filterSource) return false;
-            if (filterSupplier && t.supplier_id !== filterSupplier) return false;
-            if (filterCard && t.card_id !== filterCard) return false;
+            if (filterCategory.length > 0 && !filterCategory.includes(t.category_id || "")) return false;
+            if (filterSource.length > 0 && !filterSource.includes(t.source_id)) return false;
+            if (filterSupplier.length > 0 && !filterSupplier.includes(t.supplier_id || "")) return false;
+            if (filterCard.length > 0 && !filterCard.includes(t.card_id || "")) return false;
 
-            if (filterMandatory) {
-                if (filterMandatory === 'mandatory' && !t.is_mandatory) return false;
-                if (filterMandatory === 'non_recurring_mandatory' && !t.is_non_recurring_mandatory) return false;
-                if (filterMandatory === 'discretionary' && (t.is_mandatory || t.is_non_recurring_mandatory)) return false;
+            if (filterMandatory.length > 0) {
+                const isMandatory = t.is_mandatory;
+                const selected = filterMandatory;
+                if (selected.includes('mandatory') && !selected.includes('discretionary') && !isMandatory) return false;
+                if (selected.includes('discretionary') && !selected.includes('mandatory') && isMandatory) return false;
+            }
+
+            if (filterOccurrence.length > 0) {
+                const isRecurring = t.is_recurring;
+                const selected = filterOccurrence;
+                if (selected.includes('recurring') && !selected.includes('occasional') && !isRecurring) return false;
+                if (selected.includes('occasional') && !selected.includes('recurring') && isRecurring) return false;
             }
 
             if (startDate && t.date < startDate) return false;
@@ -113,22 +150,25 @@ export const ExpensesView = ({
         });
     }, [transactions, filterCategory, filterSource, filterSupplier, filterCard, filterMandatory, startDate, endDate]);
 
+    const filteredExpenses = useMemo(() => filtered.filter(t => t.type === 'expense'), [filtered]);
+
     const totals = useMemo(() => {
         const income = filtered.filter(t => t.type === 'income').reduce((sum, t) => sum + t.value, 0);
-        const expense = filtered.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.value, 0);
+        const expense = filteredExpenses.reduce((sum, t) => sum + t.value, 0);
         return { income, expense };
-    }, [filtered]);
+    }, [filtered, filteredExpenses]);
 
-    const getRanked = (key: 'category_id' | 'source_id' | 'supplier_id' | 'type', items: any[]) => {
+    const getRanked = (key: 'category_id' | 'source_id' | 'supplier_id' | 'type' | 'occurrence', items: any[]) => {
         const data: Record<string, number> = {};
-        filtered.filter(t => t.type === 'expense').forEach(t => {
+        filteredExpenses.forEach(t => {
             let name = "Outros";
             if (key === 'type') {
-                if (t.is_mandatory) name = "Obrigatório (Recorrente)";
-                else if (t.is_non_recurring_mandatory) name = "Obrigatório (Não recorrente)";
-                else name = "Discricionário";
+                if (t.is_mandatory) name = "OBRIGATÓRIO";
+                else name = "DISCRICIONÁRIO";
+            } else if (key === 'occurrence') {
+                name = t.is_recurring ? "Recorrente" : "Ocasional";
             } else {
-                const id = t[key];
+                const id = t[key as 'category_id' | 'source_id' | 'supplier_id'];
                 name = items.find(i => i.id === id)?.name || "Outros";
             }
             data[name] = (data[name] || 0) + t.value;
@@ -137,13 +177,13 @@ export const ExpensesView = ({
     };
 
     const renderRankList = (data: any[], title: string) => (
-        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: activeFilters.length > 0 ? "calc(100vh - 410px)" : "calc(100vh - 383px)" }}>
-            <h3 className="text-sm font-bold text-zinc-300 mb-3 flex-shrink-0">{title}</h3>
-            <div className="space-y-3 overflow-y-auto pr-2 flex-1">
+        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: "calc(100vh - 315px)" }}>
+            <h3 className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-3 flex-shrink-0">{title}</h3>
+            <div className="space-y-3 overflow-y-auto pr-2 flex-1 custom-scrollbar">
                 {data.map((item, index) => (
-                    <div key={index} className="flex justify-between items-center text-xs">
-                        <span className="text-zinc-400">{item.name}</span>
-                        <span className="font-mono text-rose-400">{formatCurrency(item.value)}</span>
+                    <div key={index} className="flex justify-between items-center text-[10px] border-b border-zinc-700/30 pb-2 last:border-0">
+                        <span className="text-zinc-400 uppercase font-bold truncate pr-2">{item.name}</span>
+                        <span className="font-mono text-rose-400 font-bold shrink-0">{formatCurrency(item.value)}</span>
                     </div>
                 ))}
             </div>
@@ -199,14 +239,17 @@ export const ExpensesView = ({
                         </button>
                         <h3 className="text-lg font-black uppercase tracking-tighter text-white">Filtros de Despesas</h3>
                         <div className="grid grid-cols-1 gap-4">
-                            <CustomSelect label="Categoria" value={filterCategory} onChange={setFilterCategory} options={availableCategories} />
-                            <CustomSelect label="Fonte" value={filterSource} onChange={setFilterSource} options={availableSources} />
-                            <CustomSelect label="Fornecedor" value={filterSupplier} onChange={setFilterSupplier} options={availableSuppliers} />
-                            <CustomSelect label="Cartão" value={filterCard} onChange={setFilterCard} options={availableCards} />
-                            <CustomSelect label="Tipo de Gasto" value={filterMandatory} onChange={setFilterMandatory} options={[
-                                { value: 'mandatory', label: 'Obrigatório (Recorrente)' },
-                                { value: 'non_recurring_mandatory', label: 'Obrigatório (Não recorrente)' },
-                                { value: 'discretionary', label: 'Discricionário' }
+                            <CustomSelect multiple label="Categoria" value={filterCategory} onChange={setFilterCategory} options={availableCategories} />
+                            <CustomSelect multiple label="Fonte" value={filterSource} onChange={setFilterSource} options={availableSources} />
+                            <CustomSelect multiple label="Fornecedor" value={filterSupplier} onChange={setFilterSupplier} options={availableSuppliers} />
+                            <CustomSelect multiple label="Cartão" value={filterCard} onChange={setFilterCard} options={availableCards} />
+                            <CustomSelect multiple label="Tipo de Gasto" value={filterMandatory} onChange={setFilterMandatory} options={[
+                                { value: 'mandatory', label: 'OBRIGATÓRIO' },
+                                { value: 'discretionary', label: 'DISCRICIONÁRIO' }
+                            ]} />
+                            <CustomSelect multiple label="Ocorrência" value={filterOccurrence} onChange={setFilterOccurrence} options={[
+                                { value: 'recurring', label: 'Recorrente' },
+                                { value: 'occasional', label: 'Ocasional' }
                             ]} />
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="flex flex-col gap-1">
@@ -227,13 +270,34 @@ export const ExpensesView = ({
                 </div>
             )}
 
-            <div className="flex-1 px-6 pb-6">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-4" style={{ height: "100%" }}>
-                    {renderRankList(getRanked('category_id', categories), "Rank por Categoria")}
-                    {renderRankList(getRanked('source_id', sources), "Rank por Fonte")}
-                    {renderRankList(getRanked('supplier_id', suppliers), "Rank por Fornecedor")}
-                    {renderRankList(getRanked('type', []), "Rank por Tipo")}
-                </div>
+            <div className="flex-1 px-6 pb-6 overflow-hidden">
+                {filteredExpenses.length === 0 ? (
+                    <div className="h-full flex items-center justify-center pt-4">
+                        <div className="bg-zinc-800/30 border border-zinc-800/50 rounded-2xl p-12 text-center max-w-sm flex flex-col items-center gap-4">
+                            <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
+                                <ListFilter className="w-8 h-8 text-zinc-600" />
+                            </div>
+                            <h3 className="text-white font-black uppercase tracking-tighter text-lg">Nenhuma despesa encontrada</h3>
+                            <p className="text-zinc-500 text-xs font-medium leading-relaxed">
+                                Não encontramos gastos que correspondam aos filtros aplicados para este período.
+                            </p>
+                            <button
+                                onClick={clearFilters}
+                                className="mt-4 px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-95 border border-zinc-700"
+                            >
+                                Limpar Filtros
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 pt-4 h-full">
+                        {renderRankList(getRanked('category_id', categories), "Rank por Categoria")}
+                        {renderRankList(getRanked('source_id', sources), "Rank por Fonte")}
+                        {renderRankList(getRanked('supplier_id', suppliers), "Rank por Fornecedor")}
+                        {renderRankList(getRanked('type', []), "Rank por Tipo")}
+                        {renderRankList(getRanked('occurrence', []), "Rank por Ocorrência")}
+                    </div>
+                )}
             </div>
         </div>
     );

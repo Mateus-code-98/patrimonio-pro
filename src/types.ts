@@ -21,6 +21,8 @@ export interface Transaction {
   source_id: string;
   date: string;
   is_mandatory: boolean;
+  is_recurring: boolean;
+  remaining_recurrence?: number;
   category_id?: string;
   supplier_id?: string;
   supplier_name?: string;
