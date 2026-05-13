@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { EmptyState } from './components/EmptyState';
 import ReactCrop, { centerCrop, makeAspectCrop, type Crop, type PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import {
@@ -1701,9 +1702,9 @@ function ReportView({
 
             if (filterOccurrence.length > 0) {
                 const isRecurring = t.is_recurring;
-                const selected = filterOccurrence;
-                if (selected.includes('recurring') && !selected.includes('occasional') && !isRecurring) return false;
-                if (selected.includes('occasional') && !selected.includes('recurring') && isRecurring) return false;
+                const matches = (filterOccurrence.includes('recurring') && isRecurring) ||
+                    (filterOccurrence.includes('occasional') && !isRecurring);
+                if (!matches) return false;
             }
 
             let catId = t.category_id;
@@ -2304,7 +2305,7 @@ function ReportView({
                                 )}
                             </div>
 
-                            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 pb-24">
+                            <div className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-24">
                                 <div className="space-y-4">
                                     {(Object.entries(groupedTransactions) as [string, Transaction[]][]).sort((a, b) => b[0].localeCompare(a[0])).map(([date, items]) => (
                                         <div key={date} className="space-y-2">
@@ -2327,23 +2328,11 @@ function ReportView({
                                         </div>
                                     ))}
                                     {Object.keys(groupedTransactions).length === 0 && (
-                                        <div className="flex items-center justify-center p-12">
-                                            <div className="bg-zinc-800/30 border border-zinc-800/50 rounded-2xl p-12 text-center max-w-sm flex flex-col items-center gap-4">
-                                                <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                                                    <ListFilter className="w-8 h-8 text-zinc-600" />
-                                                </div>
-                                                <h3 className="text-white font-black uppercase tracking-tighter text-lg">Nenhuma transação encontrada</h3>
-                                                <p className="text-zinc-500 text-xs font-medium leading-relaxed">
-                                                    Não encontramos transações que correspondam aos filtros aplicados para este período.
-                                                </p>
-                                                <button
-                                                    onClick={clearFilters}
-                                                    className="mt-4 px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-95 border border-zinc-700 pointer-events-auto"
-                                                >
-                                                    Limpar Filtros
-                                                </button>
-                                            </div>
-                                        </div>
+                                        <EmptyState
+                                            title="Nenhuma transação encontrada"
+                                            description="Não encontramos transações que correspondam aos filtros aplicados para este período."
+                                            onClearFilters={clearFilters}
+                                        />
                                     )}
                                 </div>
                             </div>

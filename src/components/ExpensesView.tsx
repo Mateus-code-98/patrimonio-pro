@@ -3,6 +3,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, Resp
 import { Transaction, Category, Source, Supplier } from '../types';
 import { CustomSelect } from './CustomSelect';
 import { Calendar, ChevronLeft, Filter, ListFilter, X } from 'lucide-react';
+import { EmptyState } from './EmptyState';
 
 const COLORS = ['#10b981', '#f43f5e', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899'];
 
@@ -132,23 +133,23 @@ export const ExpensesView = ({
 
             if (filterMandatory.length > 0) {
                 const isMandatory = t.is_mandatory;
-                const selected = filterMandatory;
-                if (selected.includes('mandatory') && !selected.includes('discretionary') && !isMandatory) return false;
-                if (selected.includes('discretionary') && !selected.includes('mandatory') && isMandatory) return false;
+                const matches = (filterMandatory.includes('mandatory') && isMandatory) ||
+                    (filterMandatory.includes('discretionary') && !isMandatory);
+                if (!matches) return false;
             }
 
             if (filterOccurrence.length > 0) {
                 const isRecurring = t.is_recurring;
-                const selected = filterOccurrence;
-                if (selected.includes('recurring') && !selected.includes('occasional') && !isRecurring) return false;
-                if (selected.includes('occasional') && !selected.includes('recurring') && isRecurring) return false;
+                const matches = (filterOccurrence.includes('recurring') && isRecurring) ||
+                    (filterOccurrence.includes('occasional') && !isRecurring);
+                if (!matches) return false;
             }
 
             if (startDate && t.date < startDate) return false;
             if (endDate && t.date > endDate) return false;
             return true;
         });
-    }, [transactions, filterCategory, filterSource, filterSupplier, filterCard, filterMandatory, startDate, endDate]);
+    }, [transactions, filterCategory, filterSource, filterSupplier, filterCard, filterMandatory, filterOccurrence, startDate, endDate]);
 
     const filteredExpenses = useMemo(() => filtered.filter(t => t.type === 'expense'), [filtered]);
 
@@ -177,7 +178,7 @@ export const ExpensesView = ({
     };
 
     const renderRankList = (data: any[], title: string) => (
-        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: "calc(100vh - 315px)" }}>
+        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: activeFilters.length > 0 ? "calc(100vh - 401px)" : "calc(100vh - 375px)" }}>
             <h3 className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-3 flex-shrink-0">{title}</h3>
             <div className="space-y-3 overflow-y-auto pr-2 flex-1 custom-scrollbar">
                 {data.map((item, index) => (
@@ -270,35 +271,21 @@ export const ExpensesView = ({
                 </div>
             )}
 
-            <div className="flex-1 px-6 pb-6 overflow-hidden">
-                {filteredExpenses.length === 0 ? (
-                    <div className="h-full flex items-center justify-center pt-4">
-                        <div className="bg-zinc-800/30 border border-zinc-800/50 rounded-2xl p-12 text-center max-w-sm flex flex-col items-center gap-4">
-                            <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-2">
-                                <ListFilter className="w-8 h-8 text-zinc-600" />
-                            </div>
-                            <h3 className="text-white font-black uppercase tracking-tighter text-lg">Nenhuma despesa encontrada</h3>
-                            <p className="text-zinc-500 text-xs font-medium leading-relaxed">
-                                Não encontramos gastos que correspondam aos filtros aplicados para este período.
-                            </p>
-                            <button
-                                onClick={clearFilters}
-                                className="mt-4 px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-95 border border-zinc-700"
-                            >
-                                Limpar Filtros
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 pt-4 h-full">
-                        {renderRankList(getRanked('category_id', categories), "Rank por Categoria")}
-                        {renderRankList(getRanked('source_id', sources), "Rank por Fonte")}
-                        {renderRankList(getRanked('supplier_id', suppliers), "Rank por Fornecedor")}
-                        {renderRankList(getRanked('type', []), "Rank por Tipo")}
-                        {renderRankList(getRanked('occurrence', []), "Rank por Ocorrência")}
-                    </div>
-                )}
-            </div>
+            {filteredExpenses.length === 0 ? (
+                <EmptyState
+                    title="Nenhuma despesa encontrada"
+                    description="Não encontramos gastos que correspondam aos filtros aplicados para este período."
+                    onClearFilters={clearFilters}
+                />
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 pt-4 h-full p-4">
+                    {renderRankList(getRanked('category_id', categories), "Rank por Categoria")}
+                    {renderRankList(getRanked('source_id', sources), "Rank por Fonte")}
+                    {renderRankList(getRanked('supplier_id', suppliers), "Rank por Fornecedor")}
+                    {renderRankList(getRanked('type', []), "Rank por Tipo")}
+                    {renderRankList(getRanked('occurrence', []), "Rank por Ocorrência")}
+                </div>
+            )}
         </div>
     );
 
