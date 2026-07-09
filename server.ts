@@ -71,7 +71,8 @@ db.exec(`
     okr_min REAL NOT NULL,
     okr_ambitious REAL NOT NULL,
     daily_spent_default REAL NOT NULL,
-    selic_tax REAL NOT NULL
+    selic_tax REAL NOT NULL,
+    is_current INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS transactions (
@@ -86,6 +87,7 @@ db.exec(`
     is_mandatory INTEGER DEFAULT 0,
     is_recurring INTEGER DEFAULT 0,
     remaining_recurrence INTEGER DEFAULT NULL,
+    is_auto INTEGER DEFAULT 0,
     FOREIGN KEY (report_id) REFERENCES reports(id) ON DELETE CASCADE,
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
     FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE RESTRICT
@@ -197,6 +199,17 @@ try {
 }
 
 try {
+  db.prepare("ALTER TABLE reports ADD COLUMN is_current INTEGER DEFAULT 0").run();
+  console.log("Successfully added is_current to reports");
+} catch (e: any) {
+  if (e.message.includes("duplicate column name")) {
+    console.log("is_current already exists in reports");
+  } else {
+    console.error("Migration error (reports is_current):", e.message);
+  }
+}
+
+try {
   db.prepare("ALTER TABLE transactions ADD COLUMN category_id TEXT REFERENCES categories(id) ON DELETE RESTRICT").run();
   console.log("Successfully added category_id to transactions");
   const txs = db.prepare("SELECT DISTINCT transaction_id, category_id FROM transaction_categories GROUP BY transaction_id").all() as any[];
@@ -227,6 +240,17 @@ try {
   }
 }
 
+try {
+  db.prepare("ALTER TABLE transactions ADD COLUMN is_auto INTEGER DEFAULT 0").run();
+  console.log("Successfully added is_auto to transactions");
+} catch (e: any) {
+  if (e.message.includes("duplicate column name")) {
+    console.log("is_auto already exists in transactions");
+  } else {
+    console.error("Migration error (transactions is_auto):", e.message);
+  }
+}
+
 async function getBase64FromUrl(url: string): Promise<string> {
   if (url.startsWith("data:image")) return url;
   try {
@@ -240,6 +264,85 @@ async function getBase64FromUrl(url: string): Promise<string> {
     console.error("Error converting to base64:", e);
     return url; // Fallback to original URL
   }
+}
+
+function propagateRecurringTransactions(startReportId: string) {
+  const startReport = db.prepare("SELECT * FROM reports WHERE id = ?").get(startReportId) as any;
+  if (!startReport) return;
+
+  const allReports = db.prepare("SELECT * FROM reports ORDER BY year ASC, month ASC").all() as any[];
+  const startIdx = allReports.findIndex(r => r.id === startReport.id);
+  if (startIdx === -1 || startIdx === allReports.length - 1) return;
+
+  const subsequentReports = allReports.slice(startIdx + 1);
+
+  const runPropagate = db.transaction(() => {
+    let prevReportId = startReport.id;
+
+    for (const report of subsequentReports) {
+      db.prepare(`
+        DELETE FROM transaction_categories 
+        WHERE transaction_id IN (SELECT id FROM transactions WHERE report_id = ? AND is_auto = 1)
+      `).run(report.id);
+
+      db.prepare(`
+        DELETE FROM transactions 
+        WHERE report_id = ? AND is_auto = 1
+      `).run(report.id);
+
+      const recurringTransactions = db.prepare(`
+        SELECT * FROM transactions 
+        WHERE report_id = ? AND is_recurring = 1
+      `).all(prevReportId) as any[];
+
+      for (const item of recurringTransactions) {
+        const rem = item.remaining_recurrence;
+
+        // se for uma despesa discricionária recorrente sem número definido de ocorrências, não cria/propaga
+        if (item.type === 'expense' && !item.is_mandatory && (rem === null || rem === undefined || rem <= 0)) {
+          continue;
+        }
+
+        if (rem !== null && rem !== undefined && rem > 0) {
+          if (rem === 1) {
+            continue;
+          }
+        }
+
+        const transId = uuidv4();
+        const targetRem = (rem !== null && rem !== undefined && rem > 1) ? rem - 1 : null;
+
+        db.prepare(`
+          INSERT INTO transactions (
+            id, report_id, value, type, source_id, date, 
+            is_mandatory, is_recurring, remaining_recurrence, 
+            supplier_id, card_id, category_id, is_auto
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        `).run(
+          transId,
+          report.id,
+          item.value,
+          item.type,
+          item.source_id,
+          report.start_date,
+          item.is_mandatory ? 1 : 0,
+          1,
+          targetRem,
+          item.supplier_id || null,
+          item.card_id || null,
+          item.category_id || null
+        );
+
+        if (item.category_id) {
+          db.prepare("INSERT INTO transaction_categories (transaction_id, category_id) VALUES (?, ?)").run(transId, item.category_id);
+        }
+      }
+
+      prevReportId = report.id;
+    }
+  });
+
+  runPropagate();
 }
 
 // Seed default data if empty
@@ -611,6 +714,51 @@ Responda APENAS com um JSON no formato:
     }
   });
 
+  app.post("/api/reports/:id/activate", (req, res) => {
+    const reportId = req.params.id;
+    try {
+      const getReport = db.prepare("SELECT * FROM reports WHERE id = ?").get(reportId) as any;
+      if (!getReport) {
+        return res.status(404).json({ error: "Relatório não encontrado" });
+      }
+
+      const start = new Date(getReport.start_date);
+      start.setHours(0, 0, 0, 0);
+
+      const end = new Date(getReport.end_date);
+      end.setHours(23, 59, 59, 999);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const isInPeriod = today.getTime() >= start.getTime() && today.getTime() <= end.getTime();
+
+      if (!isInPeriod) {
+        return res.status(400).json({
+          error: "Não é possível definir este relatório como 'EM CURSO' porque o seu período de vigência não inclui o dia de hoje."
+        });
+      }
+
+      db.transaction(() => {
+        db.prepare("UPDATE reports SET is_current = 0").run();
+        db.prepare("UPDATE reports SET is_current = 1 WHERE id = ?").run(reportId);
+      })();
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/reports/:id/deactivate", (req, res) => {
+    const reportId = req.params.id;
+    try {
+      db.prepare("UPDATE reports SET is_current = 0 WHERE id = ?").run(reportId);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/reports", (req, res) => {
     const { month, year, start_date, end_date, initial_patrimony, okr_min, okr_ambitious, daily_spent_default, selic_tax } = req.body;
     const id = uuidv4();
@@ -621,19 +769,61 @@ Responda APENAS com um JSON no formato:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, month, year, start_date, end_date, initial_patrimony, okr_min, okr_ambitious, daily_spent_default, selic_tax);
 
-      // Auto-insert default incomes from config
-      const configRow = db.prepare("SELECT value FROM global_config WHERE key = 'default_incomes'").get() as { value: string };
-      if (configRow && configRow.value) {
-        const defaultIncomes = JSON.parse(configRow.value);
-        if (Array.isArray(defaultIncomes)) {
-          defaultIncomes.forEach(income => {
-            const transId = uuidv4();
-            db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date) VALUES (?, ?, ?, ?, ?, ?)").run(
-              transId, id, income.value, "income", income.source_id, start_date
-            );
-            db.prepare("INSERT INTO transaction_categories (transaction_id, category_id) VALUES (?, ?)").run(transId, income.category_id);
-          });
-        }
+      // Auto-recreate recurring transactions (incomes and expenses) from the previous month's report
+      const prevMonth = month === 0 ? 11 : month - 1;
+      const prevYear = month === 0 ? year - 1 : year;
+
+      const prevReport = db.prepare("SELECT * FROM reports WHERE month = ? AND year = ?").get(prevMonth, prevYear) as any;
+      if (prevReport) {
+        const recurringTransactions = db.prepare(`
+          SELECT * FROM transactions 
+          WHERE report_id = ? AND is_recurring = 1
+        `).all(prevReport.id) as any[];
+
+        recurringTransactions.forEach(item => {
+          const rem = item.remaining_recurrence;
+
+          // se for uma despesa discricionária recorrente sem número definido de ocorrências, não cria/propaga
+          if (item.type === 'expense' && !item.is_mandatory && (rem === null || rem === undefined || rem <= 0)) {
+            return; // skip creation
+          }
+
+          // se a transacao tiver um número definido de ocorrencias(maior que 0)
+          if (rem !== null && rem !== undefined && rem > 0) {
+            // caso o total de ocorrencias era 1 então não terá mais essa transacao no novo relatório
+            if (rem === 1) {
+              return; // skip creation
+            }
+          }
+
+          const transId = uuidv4();
+          const targetRem = (rem !== null && rem !== undefined && rem > 1) ? rem - 1 : null;
+
+          db.prepare(`
+            INSERT INTO transactions (
+              id, report_id, value, type, source_id, date, 
+              is_mandatory, is_recurring, remaining_recurrence, 
+              supplier_id, card_id, category_id, is_auto
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          `).run(
+            transId,
+            id,
+            item.value,
+            item.type,
+            item.source_id,
+            start_date, // primeiro dia do período do relatório
+            item.is_mandatory ? 1 : 0,
+            1, // is_recurring
+            targetRem,
+            item.supplier_id || null,
+            item.card_id || null,
+            item.category_id || null
+          );
+
+          if (item.category_id) {
+            db.prepare("INSERT INTO transaction_categories (transaction_id, category_id) VALUES (?, ?)").run(transId, item.category_id);
+          }
+        });
       }
 
       res.json({ id });
@@ -643,23 +833,39 @@ Responda APENAS com um JSON no formato:
   });
 
   app.delete("/api/reports/:id", (req, res) => {
-    db.prepare("DELETE FROM reports WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
+    try {
+      const allReports = db.prepare("SELECT id FROM reports ORDER BY year ASC, month ASC").all() as any[];
+      if (allReports.length > 2) {
+        const oldestId = allReports[0].id;
+        const newestId = allReports[allReports.length - 1].id;
+        const targetId = req.params.id;
+        if (targetId !== oldestId && targetId !== newestId) {
+          return res.status(400).json({ error: "Apenas relatórios das pontas (o mais antigo ou o mais recente) podem ser removidos." });
+        }
+      }
+      db.prepare("DELETE FROM reports WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.post("/api/transactions", (req, res) => {
-    const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id } = req.body;
+    const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, propagate } = req.body;
     const id = uuidv4();
     let finalCatId = category_id;
     if (!finalCatId && categories && categories.length > 0) finalCatId = categories[0];
 
     const insert = db.transaction(() => {
-      db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, category_id, is_auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)")
         .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, is_recurring ? 1 : 0, remaining_recurrence !== undefined ? remaining_recurrence : null, supplier_id, card_id || null, finalCatId);
     });
 
     try {
       insert();
+      if (propagate && report_id) {
+        propagateRecurringTransactions(report_id);
+      }
       res.json({ id });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -668,7 +874,14 @@ Responda APENAS com um JSON no formato:
 
   app.delete("/api/transactions/:id", (req, res) => {
     try {
+      const transRow = db.prepare("SELECT report_id FROM transactions WHERE id = ?").get(req.params.id) as any;
       db.prepare("DELETE FROM transactions WHERE id = ?").run(req.params.id);
+
+      const propagate = req.query.propagate === "true" || req.query.propagate === "1" || req.body?.propagate === true;
+      if (propagate && transRow) {
+        propagateRecurringTransactions(transRow.report_id);
+      }
+
       res.json({ success: true });
     } catch (e: any) {
       console.error("Delete error:", e);
@@ -735,7 +948,7 @@ Responda APENAS com um JSON no formato:
           }
 
           // Insert transaction
-          db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, category_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, category_id, is_auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)")
             .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, is_recurring ? 1 : 0, remaining_recurrence !== undefined ? remaining_recurrence : null, finalSupplierId, card_id || null, finalCatId);
         }
       });
@@ -1150,9 +1363,11 @@ Retorne o JSON com os campos adicionais 'installments_count' (inteiro, padrão 1
   });
 
   app.put("/api/transactions/:id", (req, res) => {
-    const { value, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id } = req.body;
+    const { value, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, propagate } = req.body;
     let finalCatId = category_id;
     if (!finalCatId && categories && categories.length > 0) finalCatId = categories[0];
+
+    const transRow = db.prepare("SELECT report_id FROM transactions WHERE id = ?").get(req.params.id) as any;
 
     const update = db.transaction(() => {
       db.prepare(`
@@ -1164,6 +1379,9 @@ Retorne o JSON com os campos adicionais 'installments_count' (inteiro, padrão 1
 
     try {
       update();
+      if (propagate && transRow) {
+        propagateRecurringTransactions(transRow.report_id);
+      }
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

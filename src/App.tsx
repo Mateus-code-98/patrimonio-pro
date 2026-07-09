@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { EmptyState } from './components/EmptyState';
+import { ProjectionView } from './components/ProjectionView';
 import ReactCrop, { centerCrop, makeAspectCrop, type Crop, type PixelCrop } from 'react-image-crop';
+// TypeScript may not have ambient declarations for importing plain CSS files here.
+// @ts-ignore: Allow importing CSS with side effects
 import 'react-image-crop/dist/ReactCrop.css';
 import {
     LayoutDashboard,
@@ -128,6 +131,8 @@ import { FinancialProvider, useFinancial } from "./FinancialContext";
 import { Report, Transaction, Category, Source, GlobalConfig, TransactionType } from "./types";
 import { CustomSelect } from "./components/CustomSelect";
 import { ExpensesView } from "./components/ExpensesView";
+import { IncomesView } from "./components/IncomesView";
+import { CustomDateRangePicker } from "./components/CustomDateRangePicker";
 
 // Dynamic Icon Component
 const Icon = ({ name, className }: { name: string; className?: string }) => {
@@ -228,7 +233,7 @@ const SHORT_MONTH_NAMES = [
 ];
 
 export default function App() {
-    const [view, setView] = useState<"dashboard" | "report" | "settings" | "categories" | "aliases" | "suppliers" | "cards">("dashboard");
+    const [view, setView] = useState<"dashboard" | "report" | "settings" | "categories" | "aliases" | "suppliers" | "cards" | "projection">("dashboard");
     const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
     const [reports, setReports] = useState<Report[]>([]);
     const [dashboardHistory, setDashboardHistory] = useState<any[]>([]);
@@ -261,14 +266,16 @@ export default function App() {
         isOpen: boolean;
         title: string;
         message: string;
-        onConfirm: () => void;
+        onConfirm: (propagate?: boolean) => void;
         variant: "danger" | "warning";
+        showPropagationInput?: boolean;
     }>({
         isOpen: false,
         title: "",
         message: "",
         onConfirm: () => { },
-        variant: "warning"
+        variant: "warning",
+        showPropagationInput: false
     });
 
     const fetchData = async (background = false) => {
@@ -401,6 +408,28 @@ export default function App() {
     };
 
     const handleDeleteReport = async (id: string) => {
+        const isEdge = (() => {
+            if (reports.length <= 2) return true;
+            const sorted = [...reports].sort((a, b) => {
+                if (a.year !== b.year) return a.year - b.year;
+                return a.month - b.month;
+            });
+            return id === sorted[0].id || id === sorted[sorted.length - 1].id;
+        })();
+
+        if (!isEdge) {
+            setConfirmModal({
+                isOpen: true,
+                title: "Ação Não Permitida",
+                message: "Não é possível remover relatórios intermediários. Apenas os relatórios das pontas (o mais antigo ou o mais recente) podem ser removidos.",
+                variant: "danger",
+                onConfirm: () => {
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+            return;
+        }
+
         setConfirmModal({
             isOpen: true,
             title: "Deletar Relatório",
@@ -415,9 +444,119 @@ export default function App() {
                             setView("dashboard");
                             setSelectedReportId(null);
                         }
+                    } else {
+                        const errData = await res.json();
+                        setConfirmModal({
+                            isOpen: true,
+                            title: "Erro ao Deletar",
+                            message: errData.error || "Erro ao deletar o relatório.",
+                            variant: "danger",
+                            onConfirm: () => {
+                                setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                            }
+                        });
+                        return;
                     }
                 } catch (err) {
                     console.error("Error deleting report:", err);
+                }
+                setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+            }
+        });
+    };
+
+    const handleActivateReport = (id: string) => {
+        const targetReport = reports.find(r => r.id === id);
+        if (!targetReport) return;
+
+        const startDate = getInitialDate(targetReport.start_date);
+        const endDate = getFinalDate(targetReport.end_date);
+        const today = getNow();
+
+        const isCurrentDateInPeriod = today >= startDate && today <= endDate;
+
+        if (!isCurrentDateInPeriod) {
+            setConfirmModal({
+                isOpen: true,
+                title: "Ação Não Permitida",
+                message: `Não é possível definir este relatório como "EM CURSO" porque o seu período de vigência (${formatDate(targetReport.start_date)} a ${formatDate(targetReport.end_date)}) não inclui o dia de hoje.`,
+                variant: "warning",
+                onConfirm: async () => {
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+            return;
+        }
+
+        const activeReport = reports.find(r => r.is_current === 1 || r.is_current === true);
+
+        const activateAction = async () => {
+            try {
+                const res = await fetch(`/api/reports/${id}/activate`, { method: "POST" });
+                if (res.ok) {
+                    await fetchData(true);
+                } else {
+                    const error = await res.json();
+                    throw new Error(error.error || "Erro ao ativar relatório");
+                }
+            } catch (err: any) {
+                console.error("Error activating report:", err);
+                return { error: err.message || "Erro ao ativar relatório" };
+            }
+        };
+
+        if (activeReport && activeReport.id !== id) {
+            setConfirmModal({
+                isOpen: true,
+                title: "Confirmar Ativação",
+                message: `Isso irá finalizar o relatório em curso atual de ${MONTH_NAMES[activeReport.month]} / ${activeReport.year}. Tem certeza que deseja definir o relatório de ${MONTH_NAMES[targetReport.month]} / ${targetReport.year} como "EM CURSO"?`,
+                variant: "warning",
+                onConfirm: async () => {
+                    const res = await activateAction();
+                    if (res && res.error) {
+                        return res;
+                    }
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+        } else {
+            setConfirmModal({
+                isOpen: true,
+                title: "Ativar Relatório",
+                message: `Deseja definir o relatório de ${MONTH_NAMES[targetReport.month]} / ${targetReport.year} como "EM CURSO"?`,
+                variant: "warning",
+                onConfirm: async () => {
+                    const res = await activateAction();
+                    if (res && res.error) {
+                        return res;
+                    }
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+        }
+    };
+
+    const handleDeactivateReport = (id: string) => {
+        const targetReport = reports.find(r => r.id === id);
+        if (!targetReport) return;
+
+        setConfirmModal({
+            isOpen: true,
+            title: "Finalizar Relatório",
+            message: `Deseja finalizar o relatório em curso de ${MONTH_NAMES[targetReport.month]} / ${targetReport.year}? Ele passará para o estado FINALIZADO.`,
+            variant: "warning",
+            onConfirm: async () => {
+                try {
+                    const res = await fetch(`/api/reports/${id}/deactivate`, { method: "POST" });
+                    if (res.ok) {
+                        await fetchData(true);
+                    } else {
+                        const error = await res.json();
+                        throw new Error(error.error || "Erro ao desativar relatório");
+                    }
+                } catch (err: any) {
+                    console.error("Error deactivating report:", err);
+                    return { error: err.message || "Erro ao desativar relatório" };
                 }
                 setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
             }
@@ -439,7 +578,7 @@ export default function App() {
         }
     };
 
-    const handleAddTransaction = async (formData: any) => {
+    const executeAddTransaction = async (formData: any) => {
         const res = await fetch("/api/transactions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -454,7 +593,7 @@ export default function App() {
         }
     };
 
-    const handleUpdateTransaction = async (formData: any) => {
+    const executeUpdateTransaction = async (formData: any) => {
         if (!editingTransaction) return;
         try {
             const res = await fetch(`/api/transactions/${editingTransaction.id}`, {
@@ -476,36 +615,119 @@ export default function App() {
         }
     };
 
-    const handleDeleteTransaction = async (id: string) => {
-        setConfirmModal({
-            isOpen: true,
-            title: "Deletar Transação",
-            message: "Confirmar a exclusão desta movimentação?",
-            variant: "danger",
-            onConfirm: async () => {
-                try {
-                    const res = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
-                    if (res.ok) {
-                        // 1. Update active report data locally for immediate feedback
-                        setActiveReportData(prev => {
-                            if (!prev) return prev;
-                            return {
-                                ...prev,
-                                transactions: prev.transactions?.filter(t => t.id !== id)
-                            };
-                        });
-                        // 2. Refresh everything in background to keep global stats synced
-                        await fetchData(true);
-                        // 3. Confirm we have the latest version of THIS report specifically
-                        const data = await fetch(`/api/reports/${selectedReportId}`).then(r => r.json());
-                        setActiveReportData(data);
-                    }
-                } catch (err) {
-                    console.error("Error deleting transaction:", err);
-                }
-                setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+    const executeDeleteTransaction = async (id: string, propagate = false) => {
+        try {
+            const res = await fetch(`/api/transactions/${id}?propagate=${propagate}`, { method: "DELETE" });
+            if (res.ok) {
+                // 1. Update active report data locally for immediate feedback
+                setActiveReportData((prev: any) => {
+                    if (!prev) return prev;
+                    return {
+                        ...prev,
+                        transactions: prev.transactions?.filter((t: any) => t.id !== id)
+                    };
+                });
+                // 2. Refresh everything in background to keep global stats synced
+                await fetchData(true);
+                // 3. Confirm we have the latest version of THIS report specifically
+                const data = await fetch(`/api/reports/${selectedReportId}`).then(r => r.json());
+                setActiveReportData(data);
             }
-        });
+        } catch (err) {
+            console.error("Error deleting transaction:", err);
+        }
+    };
+
+    const handleAddTransaction = async (formData: any) => {
+        const startReport = reports.find((r: any) => r.id === selectedReportId);
+        const hasSubsequent = startReport ? reports.some((r: any) => r.year > startReport.year || (r.year === startReport.year && r.month > startReport.month)) : false;
+
+        const needsProp = hasSubsequent && !!formData.is_recurring; // Case 1: Nova transação recorrente criada
+
+        if (needsProp) {
+            setConfirmModal({
+                isOpen: true,
+                title: "Propagar Transação Recorrente?",
+                message: "Esta transação é recorrente. Deseja que ela seja criada também em todos os relatórios subsequentes?",
+                variant: "warning",
+                showPropagationInput: true,
+                onConfirm: async (propagateValue?: boolean) => {
+                    const propagate = !!propagateValue;
+                    await executeAddTransaction({ ...formData, propagate });
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+        } else {
+            await executeAddTransaction(formData);
+        }
+    };
+
+    const handleUpdateTransaction = async (formData: any) => {
+        if (!editingTransaction) return;
+        const startReport = reports.find((r: any) => r.id === selectedReportId);
+        const hasSubsequent = startReport ? reports.some((r: any) => r.year > startReport.year || (r.year === startReport.year && r.month > startReport.month)) : false;
+
+        const wasRecurring = !!editingTransaction.is_recurring;
+        const isRecurringNow = !!formData.is_recurring;
+
+        const needsProp = hasSubsequent && (
+            (wasRecurring && isRecurringNow) || // Case 2: Edição de uma transação recorrente
+            (wasRecurring && !isRecurringNow) || // Case 4: Alteração de uma transação de recorrente para ocasional
+            (!wasRecurring && isRecurringNow)    // Case 5: Alteração de uma transação ocasional para recorrente
+        );
+
+        if (needsProp) {
+            setConfirmModal({
+                isOpen: true,
+                title: "Propagar Alterações?",
+                message: "Esta transação envolve uma recorrência. Deseja que esta alteração seja propagada aos outros relatórios subsequentes?",
+                variant: "warning",
+                showPropagationInput: true,
+                onConfirm: async (propagateValue?: boolean) => {
+                    const propagate = !!propagateValue;
+                    await executeUpdateTransaction({ ...formData, propagate });
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+        } else {
+            await executeUpdateTransaction(formData);
+        }
+    };
+
+    const handleDeleteTransaction = async (id: string) => {
+        const transactionToDelete = activeReportData?.transactions?.find((t: any) => t.id === id);
+        const isRecurring = transactionToDelete ? !!transactionToDelete.is_recurring : false;
+
+        const startReport = reports.find((r: any) => r.id === selectedReportId);
+        const hasSubsequent = startReport ? reports.some((r: any) => r.year > startReport.year || (r.year === startReport.year && r.month > startReport.month)) : false;
+
+        const needsProp = hasSubsequent && isRecurring; // Case 3: Deleção de uma transação recorrente
+
+        if (needsProp) {
+            setConfirmModal({
+                isOpen: true,
+                title: "Propagar Deleção?",
+                message: "Esta transação é recorrente. Deseja que a remoção seja propagada aos outros relatórios subsequentes?",
+                variant: "danger",
+                showPropagationInput: true,
+                onConfirm: async (propagateValue?: boolean) => {
+                    const propagate = !!propagateValue;
+                    await executeDeleteTransaction(id, propagate);
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+        } else {
+            setConfirmModal({
+                isOpen: true,
+                title: "Deletar Transação",
+                message: "Confirmar a exclusão desta movimentação?",
+                variant: "danger",
+                onConfirm: async () => {
+                    await executeDeleteTransaction(id, false);
+                    setConfirmModal((prev: any) => ({ ...prev, isOpen: false }));
+                }
+            });
+        }
     };
 
     const handleNavigate = (direction: 'next' | 'prev') => {
@@ -564,6 +786,8 @@ export default function App() {
                 handleCalculateProjection={handleCalculateProjection}
                 handleNavigate={handleNavigate}
                 handleDeleteTransaction={handleDeleteTransaction}
+                handleActivateReport={handleActivateReport}
+                handleDeactivateReport={handleDeactivateReport}
             />
 
             {/* Modals */}
@@ -704,9 +928,10 @@ function FinancialAppContent({
     activeReportData, setActiveReportData, loading, fetchData, setShowConfigModal, setShowAddReportModal,
     setShowEditReportModal, setShowTransactionModal, setShowImportSelection, setPreSelectedCategories,
     setEditingTransaction, setPendingReport,
-    setConfirmModal, handleDeleteReport, handleCalculateProjection, handleNavigate, handleDeleteTransaction
+    setConfirmModal, handleDeleteReport, handleCalculateProjection, handleNavigate, handleDeleteTransaction,
+    handleActivateReport, handleDeactivateReport
 }: any) {
-    const { dailySpentMode, setDailySpentMode, surplusProjectionMode, setSurplusProjectionMode, dailySpentValues, surplusValues, activeReportStats } = useFinancial();
+    const { dailySpentMode, setDailySpentMode, dailySpentValues, activeReportStats } = useFinancial();
 
     const { latestReportFull } = useMemo(() => {
         if (reports.length === 0) return { latestReportFull: null };
@@ -794,6 +1019,12 @@ function FinancialAppContent({
                         label="Relatórios"
                     />
                     <SidebarItem
+                        active={view === 'projection'}
+                        onClick={() => setView("projection")}
+                        icon={TrendingUp}
+                        label="Projeção"
+                    />
+                    <SidebarItem
                         active={view === 'categories'}
                         onClick={() => setView("categories")}
                         icon={Tag}
@@ -836,7 +1067,7 @@ function FinancialAppContent({
                 <header className="h-14 border-b border-zinc-800 bg-zinc-900 flex items-center justify-between px-6 shrink-0 z-40">
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">
-                            {view === "dashboard" ? "Visão Geral" : view === "report" ? "Análise Mensal" : view === "aliases" ? "Gestão de Pseudônimos" : view === "suppliers" ? "Gestão de Fornecedores" : view === "cards" ? "Gestão de Cartões" : "Gestão de Categorias"}
+                            {view === "dashboard" ? "Visão Geral" : view === "report" ? "Análise Mensal" : view === "projection" ? "Projeção de Patrimônio" : view === "aliases" ? "Gestão de Pseudônimos" : view === "suppliers" ? "Gestão de Fornecedores" : view === "cards" ? "Gestão de Cartões" : "Gestão de Categorias"}
                         </span>
                     </div>
 
@@ -861,35 +1092,6 @@ function FinancialAppContent({
                                         {dailySpentMode === m.id && (
                                             <motion.div
                                                 layoutId="activeMode"
-                                                className={`absolute inset-0 ${m.color}`}
-                                                transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                            />
-                                        )}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 bg-zinc-800/40 p-1 rounded-xl border border-zinc-800 backdrop-blur-sm uppercase">
-                            <span className="text-[9px] text-zinc-600 uppercase font-black tracking-widest px-2">Sobra</span>
-                            <div className="flex items-center gap-1 uppercase">
-                                {[
-                                    { id: 'historical', label: 'Histórica', color: 'bg-blue-600', val: surplusValues.historical },
-                                    { id: 'current', label: 'Atual', color: 'bg-orange-600', val: surplusValues.current },
-                                    { id: 'default', label: 'Estimada', color: 'bg-emerald-600', val: surplusValues.default }
-                                ].map((m) => (
-                                    <button
-                                        key={m.id}
-                                        onClick={() => setSurplusProjectionMode(m.id as any)}
-                                        className="relative px-3 py-1.5 text-[8px] rounded-lg transition-all duration-300 overflow-hidden uppercase"
-                                        style={{ minWidth: 150 }}
-                                    >
-                                        <span className={`relative z-10 font-bold ${surplusProjectionMode === m.id ? 'text-white' : 'text-zinc-500 hover:text-zinc-300'} uppercase`}>
-                                            {m.label}: {formatCurrency(m.val)}
-                                        </span>
-                                        {surplusProjectionMode === m.id && (
-                                            <motion.div
-                                                layoutId="activeSurplusMode"
                                                 className={`absolute inset-0 ${m.color}`}
                                                 transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                                             />
@@ -940,8 +1142,19 @@ function FinancialAppContent({
                                 onDeleteReport={handleDeleteReport}
                                 onCalculateProjection={handleCalculateProjection}
                                 onNavigate={handleNavigate}
+                                onActivateReport={handleActivateReport}
+                                onDeactivateReport={handleDeactivateReport}
                                 config={config}
                             />
+                        ) : view === "projection" ? (
+                            <div key="projection" className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                                <ProjectionView
+                                    reports={reports}
+                                    config={config}
+                                    initialReportId={selectedReportId}
+                                    onBack={() => { setView("dashboard"); setSelectedReportId(null); }}
+                                />
+                            </div>
                         ) : view === "aliases" ? (
                             <AliasesView aliases={aliases} onRefresh={fetchData} />
                         ) : view === "suppliers" ? (
@@ -980,12 +1193,10 @@ function FinancialAppContent({
 // --- Helper Hooks ---
 
 function usePatrimonyProjection(report: Report | null, projectionMonths: number, scenarioKey: number) {
-    const { selectedSurplusValue, activeReportStats } = useFinancial();
+    const { selectedDailyValue, activeReportStats } = useFinancial();
 
     return useMemo(() => {
         if (!report || !activeReportStats) return [];
-
-        const surplusValue = selectedSurplusValue;
 
         const annualRate = report.selic_tax / 100;
         const monthlyRate = Math.pow(1 + annualRate, 1 / 12) - 1;
@@ -998,10 +1209,40 @@ function usePatrimonyProjection(report: Report | null, projectionMonths: number,
             month: `${SHORT_MONTH_NAMES[report.month]}/${report.year}`,
             patrimony: currentPatrimony,
             interest: currentInterest,
-            selic: currentSelic
+            selic: currentSelic,
+            surplus: activeReportStats.expectedSurplus
         }];
 
+        let activeRecurring = (report.transactions || [])
+            .filter(t => t.is_recurring)
+            .map(t => {
+                let rem = null;
+                if (t.remaining_recurrence !== undefined && t.remaining_recurrence !== null && String(t.remaining_recurrence) !== '') {
+                    const parsed = parseInt(String(t.remaining_recurrence), 10);
+                    if (!isNaN(parsed)) rem = parsed;
+                }
+                return {
+                    type: t.type,
+                    value: Number(t.value),
+                    remaining: rem
+                };
+            });
+
         for (let i = 1; i <= projectionMonths; i++) {
+            // Calculate active items for this subsequent month
+            const activeItems = activeRecurring.filter(item => item.remaining === null || item.remaining >= 1);
+            const incomeSum = activeItems.filter(item => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
+            const expenseSum = activeItems.filter(item => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
+            const monthlySurplus = incomeSum - expenseSum - (selectedDailyValue * 30);
+
+            // Decrement remaining for next month
+            activeRecurring = activeRecurring.map(item => {
+                if (item.remaining !== null) {
+                    return { ...item, remaining: item.remaining - 1 };
+                }
+                return item;
+            });
+
             // Simulate Selic volatility (simplified logic)
             const adjustments = [0, 0.25, 0.5, 0.75];
             const adjWeights = [0.3, 0.4, 0.15, 0.15];
@@ -1024,7 +1265,7 @@ function usePatrimonyProjection(report: Report | null, projectionMonths: number,
             // Calculate interest on the previous end balance (which is this month's start balance)
             const interestEarned = currentPatrimony * mRate;
             // Apply interest then add the surplus for the month
-            currentPatrimony = currentPatrimony + interestEarned + surplusValue;
+            currentPatrimony = currentPatrimony + interestEarned + monthlySurplus;
 
             const dateObj = new Date(report.year, report.month + i, 1);
             const mIndex = dateObj.getMonth();
@@ -1033,20 +1274,19 @@ function usePatrimonyProjection(report: Report | null, projectionMonths: number,
                 month: `${SHORT_MONTH_NAMES[mIndex]}/${yIndex}`,
                 patrimony: currentPatrimony,
                 interest: interestEarned,
-                selic: currentSelic
+                selic: currentSelic,
+                surplus: monthlySurplus
             });
         }
         return data;
-    }, [report, activeReportStats, projectionMonths, scenarioKey, selectedSurplusValue]);
+    }, [report, activeReportStats, projectionMonths, scenarioKey, selectedDailyValue]);
 }
 
 function useTimeToGoal(report: Report | null, config: GlobalConfig | null) {
-    const { selectedSurplusValue, activeReportStats } = useFinancial();
+    const { selectedDailyValue, activeReportStats } = useFinancial();
 
     return useMemo(() => {
         if (!report || !activeReportStats) return null;
-
-        const surplusValue = selectedSurplusValue;
 
         const target = Number(config?.goal_target_default) || 1000000;
         const annualRate = report.selic_tax / 100;
@@ -1054,19 +1294,48 @@ function useTimeToGoal(report: Report | null, config: GlobalConfig | null) {
 
         // Month 0: Initial + (Initial * Rate) + Current Expected Surplus
         let current = report.initial_patrimony * (1 + rate) + activeReportStats.expectedSurplus;
-        const monthlySurplus = surplusValue;
 
         if (current >= target) return { months: 0, years: 0 };
-        if (monthlySurplus <= 0 && rate <= 0) return null;
+
+        let activeRecurring = (report.transactions || [])
+            .filter(t => t.is_recurring)
+            .map(t => {
+                let rem = null;
+                if (t.remaining_recurrence !== undefined && t.remaining_recurrence !== null && String(t.remaining_recurrence) !== '') {
+                    const parsed = parseInt(String(t.remaining_recurrence), 10);
+                    if (!isNaN(parsed)) rem = parsed;
+                }
+                return {
+                    type: t.type,
+                    value: Number(t.value),
+                    remaining: rem
+                };
+            });
 
         let m = 0;
         while (current < target && m < 1200) {
-            // Future months: (Balance * (1 + rate)) + Surplus
+            const activeItems = activeRecurring.filter(item => item.remaining === null || item.remaining >= 1);
+            const incomeSum = activeItems.filter(item => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
+            const expenseSum = activeItems.filter(item => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
+            const monthlySurplus = incomeSum - expenseSum - (selectedDailyValue * 30);
+
+            // Decrement remaining for future months
+            activeRecurring = activeRecurring.map(item => {
+                if (item.remaining !== null) {
+                    return { ...item, remaining: item.remaining - 1 };
+                }
+                return item;
+            });
+
+            // If we are not earning any interest and surplus is negative, we can never reach the target
+            if (monthlySurplus <= 0 && rate <= 0) return null;
+
             current = current * (1 + rate) + monthlySurplus;
             m++;
         }
+        if (m >= 1200) return null;
         return { months: m % 12, years: Math.floor(m / 12) };
-    }, [report, activeReportStats, config, selectedSurplusValue]);
+    }, [report, activeReportStats, config, selectedDailyValue]);
 }
 
 function PatrimonyProjectionCard({
@@ -1149,8 +1418,8 @@ interface DashboardProps {
     key?: string;
 }
 
-function ReportListItem({ r, onClick, onDelete, config }: { r: Report; onClick: () => void; onDelete: (id: string) => void; key?: string; config: GlobalConfig | null }) {
-    const { selectedDailyValue, dailySpentMode } = useFinancial();
+function ReportListItem({ r, onClick, onDelete, config, isEdge = true }: { r: Report; onClick: () => void; onDelete: (id: string) => void; key?: string; config: GlobalConfig | null; isEdge?: boolean }) {
+    const { reports, dailySpentMode } = useFinancial();
     const startDate = getInitialDate(r.start_date);
     const endDate = getFinalDate(r.end_date);
     const now = getNow();
@@ -1159,51 +1428,74 @@ function ReportListItem({ r, onClick, onDelete, config }: { r: Report; onClick: 
 
     const percentage = Math.min(100, Math.max(0, (daysPassed / totalDays) * 100));
 
-    const isInProgress = useMemo(() => {
-        const now = getNow();
-        const start = new Date(r.start_date);
-        const end = new Date(r.end_date);
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
-        return now >= start && now <= end;
-    }, [r.start_date, r.end_date]);
+    const reportStatus = useMemo(() => {
+        const start = getInitialDate(r.start_date);
+        const end = getFinalDate(r.end_date);
+        const today = getNow();
 
-    const isNotStarted = useMemo(() => {
-        const now = getNow();
-        const start = new Date(r.start_date);
-        start.setHours(0, 0, 0, 0);
-        return now < start;
-    }, [r.start_date]);
+        const isInPeriod = today >= start && today <= end;
+        const isFutureOrToday = start > today;
+        const isOnPeriod = start <= today && end >= today;
+        if (isOnPeriod) return "EM ANDAMENTO";
 
-    const metOkrMin = useMemo(() => {
-        if (!r.transactions) return false;
-        const income = r.transactions.filter(t => t.type === 'income').reduce((a, b) => a + b.value, 0);
-        const expense = r.transactions.filter(t => t.type === 'expense').reduce((a, b) => a + b.value, 0);
-        return (income - expense) >= r.okr_min;
-    }, [r.transactions, r.okr_min]);
+        if (isInPeriod || isFutureOrToday) {
+            return "NÃO INICIADO";
+        }
 
-    const metOkrAmbitious = useMemo(() => {
-        if (!r.transactions) return false;
-        const income = r.transactions.filter(t => t.type === 'income').reduce((a, b) => a + b.value, 0);
-        const expense = r.transactions.filter(t => t.type === 'expense').reduce((a, b) => a + b.value, 0);
-        return (income - expense) >= r.okr_ambitious;
-    }, [r.transactions, r.okr_ambitious]);
+        return "FINALIZADO";
+    }, [r.is_current, r.start_date, r.end_date]);
 
     const projection = useMemo(() => {
         if (!r.transactions) return null;
 
-        const startDate = getInitialDate(r.start_date);
-        const endDate = getFinalDate(r.end_date);
+        // TODO: TELA PRINCIPAL
+        const startDate = getInitialDate((r.start_date));
+        const endDate = getFinalDate((r.end_date));
         const now = getNow();
+
+        const nowIsOnPeriod = now >= startDate && now <= endDate;
 
         const totalDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
         const daysPassed = Math.min(totalDays, Math.max(0, Math.ceil((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))));
-        let daysRemaining = Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)));
+        let daysRemaining = (Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)))) - (nowIsOnPeriod ? 1 : 0);
+        if (daysRemaining < 0) daysRemaining = 0;
 
         const income = r.transactions.filter(t => t.type === 'income').reduce((a, b) => a + Number(b.value), 0);
         const totalExpenses = r.transactions.filter(t => t.type === 'expense').reduce((a, b) => a + Number(b.value), 0);
 
-        const avgDailyExpense = selectedDailyValue;
+        const avgDailyExpense = (() => {
+            if (dailySpentMode === 'current') {
+                const totalDiscretionaryRecurring = r.transactions
+                    .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+                    .reduce((sum, t) => sum + Number(t.value), 0);
+                return daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
+            } else if (dailySpentMode === 'default') {
+                return config?.daily_spent_estimate_default || 0;
+            } else {
+                // 'historical'
+                const priorReports = reports.filter(item => item.start_date < r.start_date);
+                if (priorReports.length === 0) return config?.daily_spent_avg || 0;
+
+                let totalDiscretionaryRecurring = 0;
+                let totalPriorDays = 0;
+
+                priorReports.forEach(item => {
+                    if (!item.transactions) return;
+                    const recurringDiscretionary = item.transactions
+                        .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+                        .reduce((sum, t) => sum + Number(t.value), 0);
+
+                    const sDate = getInitialDate(item.start_date);
+                    const eDate = getFinalDate(item.end_date);
+                    const days = Math.max(1, Math.ceil((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+                    totalDiscretionaryRecurring += recurringDiscretionary;
+                    totalPriorDays += days;
+                });
+
+                return totalPriorDays > 0 ? totalDiscretionaryRecurring / totalPriorDays : (config?.daily_spent_avg || 0);
+            }
+        })();
 
         const projectedVariable = avgDailyExpense * daysRemaining;
         const estimatedTotalExpense = totalExpenses + projectedVariable;
@@ -1216,20 +1508,22 @@ function ReportListItem({ r, onClick, onDelete, config }: { r: Report; onClick: 
         const increase = r.initial_patrimony !== 0 ? ((projected - r.initial_patrimony) / r.initial_patrimony) * 100 : (projected - r.initial_patrimony);
 
         return { projected, increase, surplus: estimatedSurplus, estimatedTotalExpense, remainingDays: daysRemaining, avgDailyExpense };
-    }, [r.transactions, r.initial_patrimony, r.selic_tax, r.start_date, r.end_date, config, dailySpentMode, selectedDailyValue]);
+    }, [r.transactions, r.initial_patrimony, r.selic_tax, r.start_date, r.end_date, config, dailySpentMode, reports]);
 
     return (
         <div
             className="relative group p-4 bg-zinc-900 border border-zinc-800 hover:border-zinc-700/50 hover:shadow-lg rounded-xl transition-all cursor-pointer flex items-center justify-between uppercase"
             onClick={onClick}
         >
-            <button
-                onClick={(e) => { e.stopPropagation(); onDelete(r.id); }}
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-500 transition-all duration-300"
-                style={{ cursor: "pointer" }}
-            >
-                <Trash2 className="w-5 h-5" />
-            </button>
+            {isEdge && (
+                <button
+                    onClick={(e) => { e.stopPropagation(); onDelete(r.id); }}
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-500 transition-all duration-300"
+                    style={{ cursor: "pointer" }}
+                >
+                    <Trash2 className="w-5 h-5" />
+                </button>
+            )}
             <div className="flex items-center gap-4">
                 <div className="relative w-10 h-10 rounded-full flex items-center justify-center">
                     <svg className="w-full h-full -rotate-90">
@@ -1278,19 +1572,15 @@ function ReportListItem({ r, onClick, onDelete, config }: { r: Report; onClick: 
                 <span className={`font-bold ${(projection?.projected ?? 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`} style={{ fontSize: 9 }}></span>
                 <div className="flex flex-col justify-between w-full" style={{ alignItems: "flex-end" }}>
                     <div className="flex items-center gap-1.5 px-2 py-0.5 bg-zinc-950 rounded-full border border-zinc-800">
-                        {isNotStarted ? (
-                            <Clock className="w-3 h-3 text-zinc-500" />
-                        ) : isInProgress ? (
-                            <HelpCircle className="w-3 h-3 text-blue-500" />
-                        ) : metOkrAmbitious ? (
-                            <Laugh className="w-3 h-3 text-emerald-400" />
-                        ) : metOkrMin ? (
-                            <Smile className="w-3 h-3 text-blue-400" />
+                        {reportStatus === "NÃO INICIADO" ? (
+                            <Clock className="w-3 h-3 text-amber-500" />
+                        ) : reportStatus === "EM ANDAMENTO" ? (
+                            <Play className="w-3 h-3 fill-emerald-500/20 text-emerald-400" />
                         ) : (
-                            <Frown className="w-3 h-3 text-red-500" />
+                            <Check className="w-3 h-3 text-zinc-500" />
                         )}
                         <span className="text-[9px] font-bold text-zinc-400 uppercase" style={{ padding: 2 }}>
-                            {isNotStarted ? "Não Iniciado" : isInProgress ? "Em Curso" : metOkrAmbitious ? "Excelente" : metOkrMin ? "Bom" : "Atenção"}
+                            {reportStatus}
                         </span>
                     </div>
                 </div>
@@ -1436,27 +1726,6 @@ function DashboardView({
                             )}
                         </div>
                     </div>
-
-                    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                        {latestReportFull && activeReportStats ? (
-                            <PatrimonyProjectionCard
-                                report={latestReportFull}
-                                config={config}
-                                showDetailedStats={false}
-                            />
-                        ) : (
-                            <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col items-center justify-center opacity-30 text-center space-y-3">
-                                <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center">
-                                    <LayoutDashboard className="w-6 h-6" />
-                                </div>
-                                <p className="text-[10px] font-bold uppercase tracking-widest max-w-[150px]">
-                                    {latestReportFull ? "Carregando projeção..." :
-                                        reports.length > 0 ? "Nenhum relatório iniciado disponível." :
-                                            "Crie um relatório para ver projeções."}
-                                </p>
-                            </div>
-                        )}
-                    </div>
                 </div>
 
                 {/* Right Column: Mini Stats */}
@@ -1478,15 +1747,27 @@ function DashboardView({
                     <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl p-4 overflow-hidden flex flex-col">
                         <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-4">Relatórios Arquivados</h3>
                         <div className="grid grid-cols-1 gap-2 overflow-y-auto pr-2 custom-scrollbar">
-                            {reports.map((r) => (
-                                <ReportListItem
-                                    key={r.id}
-                                    r={r}
-                                    onClick={() => onSelectReport(r.id)}
-                                    onDelete={onDeleteReport}
-                                    config={config}
-                                />
-                            ))}
+                            {reports.map((r) => {
+                                const isEdge = (() => {
+                                    if (reports.length <= 2) return true;
+                                    const sorted = [...reports].sort((a, b) => {
+                                        if (a.year !== b.year) return a.year - b.year;
+                                        return a.month - b.month;
+                                    });
+                                    return r.id === sorted[0].id || r.id === sorted[sorted.length - 1].id;
+                                })();
+                                console.log(reports)
+                                return (
+                                    <ReportListItem
+                                        key={r.id}
+                                        r={r}
+                                        onClick={() => onSelectReport(r.id)}
+                                        onDelete={onDeleteReport}
+                                        config={config}
+                                        isEdge={isEdge}
+                                    />
+                                );
+                            })}
                         </div>
                     </div>
                 </aside>
@@ -1510,6 +1791,8 @@ interface ReportViewProps {
     onDeleteReport: (id: string) => void;
     onNavigate: (direction: 'next' | 'prev') => void;
     onCalculateProjection: (id: string) => void;
+    onActivateReport: (id: string) => void;
+    onDeactivateReport: (id: string) => void;
     config: GlobalConfig | null;
     key?: string;
 }
@@ -1520,14 +1803,16 @@ function getNow() {
     return today;
 }
 
-function getFinalDate(dateStr: string) {
+function getFinalDate(dateStr: any) {
     const date = new Date(dateStr);
+    date.setHours(date.getHours() + 3);
     date.setHours(23, 59, 59, 999);
     return date;
 }
 
-function getInitialDate(dateStr: string) {
+function getInitialDate(dateStr: any) {
     const date = new Date(dateStr);
+    date.setHours(date.getHours() + 3);
     date.setHours(0, 0, 0, 0);
     return date;
 }
@@ -1608,12 +1893,14 @@ function ReportView({
     onDeleteReport,
     onCalculateProjection,
     onNavigate,
+    onActivateReport,
+    onDeactivateReport,
     config
 }: ReportViewProps) {
     const { activeReportStats } = useFinancial();
     const timeToGoal = useTimeToGoal(report, config);
     const stats = activeReportStats;
-    const [viewMode, setViewMode] = useState<"overview" | "transactions" | "expenses" | "discretionary">("overview");
+    const [viewMode, setViewMode] = useState<"overview" | "transactions" | "expenses" | "incomes" | "discretionary" | "projection">("overview");
 
     const [filterType, setFilterType] = useState<string[]>([]);
     const [filterSource, setFilterSource] = useState<string[]>([]);
@@ -1641,24 +1928,24 @@ function ReportView({
     };
 
     const availableCategories = useMemo(() => {
-        const ids = new Set(report.transactions?.map((t: any) => t.category_id || (t.categories && t.categories[0])));
+        const ids = new Set(report?.transactions?.map((t: any) => t.category_id || (t.categories && t.categories[0])));
         return categories.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name, icon: c.icon }));
-    }, [report.transactions, categories]);
+    }, [report?.transactions, categories]);
 
     const availableSources = useMemo(() => {
-        const ids = new Set(report.transactions?.map((t: any) => t.source_id));
+        const ids = new Set(report?.transactions?.map((t: any) => t.source_id));
         return sources.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name, icon: s.icon }));
-    }, [report.transactions, sources]);
+    }, [report?.transactions, sources]);
 
     const availableSuppliers = useMemo(() => {
-        const ids = new Set(report.transactions?.map((t: any) => t.supplier_id));
+        const ids = new Set(report?.transactions?.map((t: any) => t.supplier_id));
         return suppliers.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name }));
-    }, [report.transactions, suppliers]);
+    }, [report?.transactions, suppliers]);
 
     const availableCards = useMemo(() => {
-        const ids = new Set(report.transactions?.map((t: any) => t.card_id));
+        const ids = new Set(report?.transactions?.map((t: any) => t.card_id));
         return cards.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name }));
-    }, [report.transactions, cards]);
+    }, [report?.transactions, cards]);
 
     const potentialDuplicates = useMemo(() => {
         if (!reports) return new Set<string>();
@@ -1689,8 +1976,8 @@ function ReportView({
         return report.transactions.filter(t => {
             if (filterType.length > 0 && !filterType.includes(t.type)) return false;
             if (filterSource.length > 0 && !filterSource.includes(t.source_id)) return false;
-            if (filterSupplier.length > 0 && !filterSupplier.includes(t.supplier_id)) return false;
-            if (filterCard.length > 0 && !filterCard.includes(t.card_id)) return false;
+            if (filterSupplier.length > 0 && !filterSupplier.includes(t?.supplier_id ?? '')) return false;
+            if (filterCard.length > 0 && !filterCard.includes(t?.card_id ?? '')) return false;
             if (filterDuplicate && !potentialDuplicates.has(t.id)) return false;
 
             if (filterMandatory.length > 0) {
@@ -1709,10 +1996,11 @@ function ReportView({
 
             let catId = t.category_id;
             if (!catId && (t as any).categories && (t as any).categories.length > 0) catId = (t as any).categories[0];
-            if (filterCategory.length > 0 && !filterCategory.includes(catId)) return false;
+            if (filterCategory.length > 0 && !filterCategory.includes(catId ?? '')) return false;
 
-            if (filterStartDate && t.date < filterStartDate) return false;
-            if (filterEndDate && t.date > filterEndDate) return false;
+            const tDateNormalized = t.date.includes('T') ? t.date : `${t.date}T00:00:00`;
+            if (filterStartDate && tDateNormalized < filterStartDate) return false;
+            if (filterEndDate && tDateNormalized >= filterEndDate) return false;
 
             return true;
         });
@@ -1812,8 +2100,30 @@ function ReportView({
             };
             filters.push({ id: 'occurrence', type: 'Tipo Ocorrência', value: filterOccurrence.map(v => labels[v]).join(', '), clear: () => setFilterOccurrence([]) });
         }
-        if (filterStartDate) filters.push({ id: 'filterStartDate', type: 'Início', value: filterStartDate, clear: () => setFilterStartDate("") });
-        if (filterEndDate) filters.push({ id: 'filterEndDate', type: 'Fim', value: filterEndDate, clear: () => setFilterEndDate("") });
+        if (filterStartDate) {
+            const startDayFormatted = filterStartDate.substring(0, 10).split('-').reverse().join('/');
+            let rangeVal = startDayFormatted;
+            if (filterEndDate) {
+                const endInclusiveObj = new Date(filterEndDate.substring(0, 10) + "T00:00:00");
+                endInclusiveObj.setDate(endInclusiveObj.getDate() - 1);
+                const y = endInclusiveObj.getFullYear();
+                const m = String(endInclusiveObj.getMonth() + 1).padStart(2, '0');
+                const d = String(endInclusiveObj.getDate()).padStart(2, '0');
+                const endDayFormatted = `${d}/${m}/${y}`;
+                if (startDayFormatted !== endDayFormatted) {
+                    rangeVal = `${startDayFormatted} a ${endDayFormatted}`;
+                }
+            }
+            filters.push({
+                id: 'datePeriod',
+                type: 'Período',
+                value: rangeVal,
+                clear: () => {
+                    setFilterStartDate("");
+                    setFilterEndDate("");
+                }
+            });
+        }
         return filters;
     }, [filterType, filterSource, filterCategory, filterSupplier, filterCard, filterMandatory, filterOccurrence, filterDuplicate, filterStartDate, filterEndDate, sources, categories, suppliers, cards]);
 
@@ -1830,40 +2140,25 @@ function ReportView({
     }, [report?.transactions, filteredTransactionsList]);
 
 
-    const { now, isTheFinalDate, start, end, daysLeft, progress, isInProgress, isNotStarted, metOkrMin, metOkrAmbitious, totalDays, daysPassed } = useMemo(() => {
-        if (!report) return { now: new Date(), isTheFinalDate: false, start: new Date(), end: new Date(), daysLeft: 0, progress: 0, isInProgress: false, isNotStarted: false, metOkrMin: false, metOkrAmbitious: false, totalDays: 0, daysPassed: 0 };
+    const { daysLeft, progress, totalDays, daysPassed } = useMemo(() => {
+        if (!report) return { daysLeft: 0, progress: 0, totalDays: 0, daysPassed: 0 };
 
         const startDate = getInitialDate(report.start_date);
         const endDate = getFinalDate(report.end_date);
         const now = getNow();
 
+        const nowIsOnPeriod = now >= startDate && now <= endDate;
+
         const totalDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
         const daysPassed = Math.min(totalDays, Math.max(0, Math.ceil((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))));
-        let daysRemaining = Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)));
+        let daysRemaining = (Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)))) - (nowIsOnPeriod ? 1 : 0);
+        if (daysRemaining < 0) daysRemaining = 0;
 
         const percentage = Math.min(100, Math.max(0, (daysPassed / totalDays) * 100));
 
-        const isInProgress = now >= startDate && now <= endDate;
-        const isNotStarted = now < startDate;
-
-        const income = report.transactions?.filter(t => t.type === 'income').reduce((a, b) => a + b.value, 0) || 0;
-        const expense = report.transactions?.filter(t => t.type === 'expense').reduce((a, b) => a + b.value, 0) || 0;
-        const metOkrMin = (income - expense) >= report.okr_min;
-        const metOkrAmbitious = (income - expense) >= report.okr_ambitious;
-
-        const initialEndDate = getInitialDate(report.end_date + "T23:59:59");
-        const isTheFinalDate = now.getTime() === initialEndDate.getTime();
         return {
-            isTheFinalDate,
-            now,
-            start: startDate,
-            end: endDate,
             daysLeft: daysRemaining,
             progress: percentage,
-            isInProgress,
-            isNotStarted,
-            metOkrMin,
-            metOkrAmbitious,
             totalDays,
             daysPassed
         };
@@ -1875,10 +2170,12 @@ function ReportView({
         const ts = filteredTransactionsList;
         const allKnownIncome = ts.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.value), 0);
         const allKnownExpenses = ts.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.value), 0);
-        const allMandatoryExpense = ts.filter(t => t.type === 'expense' && t.is_mandatory).reduce((acc, t) => acc + Number(t.value), 0);
+        const allMandatoryExpense = ts.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((acc, t) => acc + Number(t.value), 0);
 
-        const totalDiscretionary = allKnownExpenses - allMandatoryExpense;
-        const currentDailyAvg = daysPassed > 0 ? totalDiscretionary / daysPassed : 0;
+        const totalDiscretionaryRecurring = ts
+            .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+            .reduce((acc, t) => acc + Number(t.value), 0);
+        const currentDailyAvg = daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
 
         let dailyBase = dailySpentValues.historical;
         if (dailySpentMode === 'current') dailyBase = currentDailyAvg;
@@ -1887,7 +2184,11 @@ function ReportView({
         const projectedVariableExpense = daysLeft * dailyBase;
         const expectedSurplus = allKnownIncome - allKnownExpenses - projectedVariableExpense;
         const partialSurplus = allKnownIncome - allKnownExpenses;
-
+        console.log({
+            daysLeft,
+            dailyBase,
+            projectedVariableExpense
+        })
         return {
             currentDailyAvg,
             expectedSurplus,
@@ -1901,6 +2202,24 @@ function ReportView({
     }, [filteredTransactionsList, daysPassed, daysLeft, dailySpentValues, dailySpentMode, config]);
 
     if (!report) return null;
+
+    const reportStatus = (() => {
+        const start = getInitialDate(report.start_date);
+        const end = getFinalDate(report.end_date);
+        const today = getNow();
+
+        const isInPeriod = today >= start && today <= end;
+        const isFutureOrToday = start >= today;
+        const isOnPeriod = start <= today && end >= today;
+
+        if (isOnPeriod) return "EM ANDAMENTO";
+
+        if (isInPeriod || isFutureOrToday) {
+            return "NÃO INICIADO";
+        }
+
+        return "FINALIZADO";
+    })();
 
     return (
         <motion.div
@@ -1922,8 +2241,23 @@ function ReportView({
                         >
                             <ChevronLeft className="w-4 h-4 text-zinc-500" />
                         </button>
-                        <div className="flex flex-col items-center gap-0.5">
-                            <h2 className="text-lg font-bold tracking-tight">{MONTH_NAMES[report.month]} <span className="text-zinc-500 text-sm">{report.year}</span></h2>
+                        <div className="flex flex-col items-center gap-1">
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-lg font-black tracking-tight text-white mb-0">{MONTH_NAMES[report.month]} <span className="text-zinc-500 font-medium text-sm">{report.year}</span></h2>
+                                {reportStatus === "EM ANDAMENTO" ? (
+                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md">
+                                        EM ANDAMENTO
+                                    </span>
+                                ) : reportStatus === "NÃO INICIADO" ? (
+                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-amber-500/10 text-amber-500 border border-amber-500/20 rounded-md">
+                                        NÃO INICIADO
+                                    </span>
+                                ) : (
+                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-zinc-800 text-zinc-400 border border-zinc-700/40 rounded-md">
+                                        FINALIZADO
+                                    </span>
+                                )}
+                            </div>
                             <p className="text-[10px] text-zinc-500 font-mono">{formatDate(report.start_date)} - {formatDate(report.end_date)}</p>
                         </div>
                         <button
@@ -1959,13 +2293,26 @@ function ReportView({
                             >
                                 <Settings className="w-4 h-4" />
                             </button>
-                            <button
-                                onClick={() => onDeleteReport(report.id)}
-                                className="p-2 border border-zinc-800 hover:bg-red-500/10 text-zinc-500 hover:text-red-500 rounded-lg transition-all cursor-pointer"
-                                title="Deletar Relatório"
-                            >
-                                <Trash2 className="w-4 h-4" />
-                            </button>
+                            {report && (() => {
+                                const isEdge = (() => {
+                                    if (reports.length <= 2) return true;
+                                    const sorted = [...reports].sort((a, b) => {
+                                        if (a.year !== b.year) return a.year - b.year;
+                                        return a.month - b.month;
+                                    });
+                                    return report.id === sorted[0].id || report.id === sorted[sorted.length - 1].id;
+                                })();
+                                if (!isEdge) return null;
+                                return (
+                                    <button
+                                        onClick={() => onDeleteReport(report.id)}
+                                        className="p-2 border border-zinc-800 hover:bg-red-500/10 text-zinc-500 hover:text-red-500 rounded-lg transition-all cursor-pointer"
+                                        title="Deletar Relatório"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                );
+                            })()}
                             <button
                                 onClick={onAddTransaction}
                                 className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 text-xs px-4 py-2 rounded-lg font-black uppercase tracking-tighter transition-all shadow-lg active:scale-95 cursor-pointer"
@@ -1977,16 +2324,46 @@ function ReportView({
                 </div>
             </div>
 
-            <div className="flex justify-center items-center gap-2 pt-0 pb-0 z-10 shrink-0">
-                {(['overview', 'transactions', 'expenses', 'discretionary'] as const).map((mode, idx) => (
-                    <button
-                        key={mode}
-                        onClick={() => setViewMode(mode)}
-                        className={`w-2 h-2 rounded-full transition-all ${viewMode === mode ? 'bg-emerald-500 w-4' : 'bg-zinc-700 hover:bg-zinc-500 cursor-pointer'}`}
-                        title={mode === 'overview' ? 'Geral' : mode === 'transactions' ? 'Transações' : mode === 'expenses' ? 'Despesas' : 'Discricionários'}
-                        aria-label={mode}
-                    />
-                ))}
+            <div className="flex justify-center items-center gap-2 pt-0 pb-0 z-10 shrink-0 flex-wrap">
+                {(['overview', 'projection', 'transactions', 'expenses', 'incomes', 'discretionary'] as const).map((mode) => {
+                    const isActive = viewMode === mode;
+                    let IconComponent = LayoutDashboard;
+                    let label = "";
+                    if (mode === 'overview') {
+                        IconComponent = LayoutDashboard;
+                        label = 'Geral';
+                    } else if (mode === 'projection') {
+                        IconComponent = TrendingUp;
+                        label = 'Projeção';
+                    } else if (mode === 'transactions') {
+                        IconComponent = FileText;
+                        label = 'Transações';
+                    } else if (mode === 'expenses') {
+                        IconComponent = TrendingDown;
+                        label = 'Despesas';
+                    } else if (mode === 'incomes') {
+                        IconComponent = ArrowUpCircle;
+                        label = 'Receitas';
+                    } else if (mode === 'discretionary') {
+                        IconComponent = Heart;
+                        label = 'Discricionários';
+                    }
+                    return (
+                        <button
+                            key={mode}
+                            onClick={() => setViewMode(mode)}
+                            className={`flex items-center justify-center gap-1.5 h-8 rounded-full border transition-all cursor-pointer ${isActive
+                                ? 'bg-emerald-500 border-emerald-500 text-emerald-950 px-3.5 font-bold shadow-lg shadow-emerald-500/15'
+                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 w-8 px-0'
+                                }`}
+                            title={label}
+                            aria-label={label}
+                        >
+                            <IconComponent className="w-4 h-4 shrink-0" />
+                            {isActive && <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">{label}</span>}
+                        </button>
+                    );
+                })}
             </div>
 
             <AnimatePresence mode="wait">
@@ -2003,40 +2380,61 @@ function ReportView({
                             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
                                 {/* Stats Grid - Full Width */}
                                 <div className="col-span-12 grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    <StatCard title="Receita Atual" value={activeReportStats?.totalIncome || 0} color="text-emerald-400" extra={`v/ 100%`} />
-                                    <StatCard
-                                        title="Gastos Totais"
-                                        value={activeReportStats?.totalExpense || 0}
-                                        color="text-rose-400"
-                                        secondaryStats={[
-                                            {
-                                                label: "Obrigatórios",
-                                                value: activeReportStats?.mandatoryExpense || 0,
-                                                tooltip: "Soma de todos os gastos marcados como obrigatórios"
-                                            },
-                                            {
-                                                label: "Discricionários",
-                                                value: (activeReportStats?.totalExpense || 0) - (activeReportStats?.mandatoryExpense || 0),
-                                                tooltip: "Gastos não obrigatórios realizados até o momento"
-                                            },
-                                            {
-                                                label: "Diário",
-                                                value: activeReportStats?.currentDailyAvg || 0,
-                                                tooltip: "Média diária de gastos não obrigatórios (até hoje)"
-                                            }
-                                        ]}
-                                    />
-                                    <StatCard
-                                        title="Sobra projetada"
-                                        value={activeReportStats?.expectedSurplus || 0}
-                                        color="text-emerald-400"
-                                        highlight
-                                        gradient
-                                        totalEstimated={activeReportStats?.expectedDiscretionaryFuture || 0}
-                                        totalEstimatedTooltip="Estimativa de gastos não obrigatórios restantes até o fim do ciclo"
-                                        miniValue={activeReportStats?.partialSurplus || 0}
-                                        miniValueTooltip="Quanto sobrou de fato até o momento (Receita - Despesas realizadas)"
-                                    />
+                                    {/* CARD 1: Receita Atual */}
+                                    <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-xl shadow-lg relative min-h-[140px] flex flex-col justify-between transition-all duration-300" style={{ overflow: "hidden" }}>
+                                        <div>
+                                            <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest block mb-1">Receita Atual</span>
+                                            <div className="flex items-baseline gap-2">
+                                                <h2 className="text-2xl font-black tracking-tight text-emerald-400 font-mono">
+                                                    {formatCurrency(activeReportStats?.totalIncome || 0)}
+                                                </h2>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* CARD 2: Gastos (total atual, restante estimado, gasto total estimado) */}
+                                    <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-xl shadow-lg relative min-h-[140px] flex flex-col justify-between transition-all duration-300" style={{ overflow: "hidden" }}>
+                                        <div>
+                                            <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest block mb-1">Gastos Estimados</span>
+                                            <div className="flex items-baseline gap-2">
+                                                <h2 className="text-2xl font-black tracking-tight text-rose-400 font-mono">
+                                                    {formatCurrency((activeReportStats?.totalExpense || 0) + (activeReportStats?.expectedDiscretionaryFuture || 0))}
+                                                </h2>
+                                                <span className="text-[10px] text-zinc-500 font-bold uppercase">Total Estimado</span>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 border-t border-zinc-800/50 pt-3 flex items-center justify-between">
+                                            <div className="flex flex-col">
+                                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Total Atual</span>
+                                                <span className="text-xs font-bold text-zinc-300 font-mono">{formatCurrency(activeReportStats?.totalExpense || 0)}</span>
+                                            </div>
+                                            <div className="flex flex-col border-l border-zinc-800 pl-4 pr-2">
+                                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Restante Estimado</span>
+                                                <span className="text-xs font-semibold text-zinc-400 font-mono">{formatCurrency(activeReportStats?.expectedDiscretionaryFuture || 0)}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* CARD 3: Sobra Projetada (sobra atual e sobra projetada) */}
+                                    <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-xl shadow-lg relative min-h-[140px] flex flex-col justify-between transition-all duration-300 bg-gradient-to-br from-zinc-990 to-zinc-950" style={{ overflow: "hidden" }}>
+                                        <div>
+                                            <span className="text-zinc-455 text-[10px] font-bold uppercase tracking-widest block mb-1">Sobra Projetada</span>
+                                            <div className="flex items-baseline gap-2">
+                                                <h2 className="text-2xl font-black tracking-tight text-emerald-400 font-mono">
+                                                    {formatCurrency(activeReportStats?.expectedSurplus || 0)}
+                                                </h2>
+                                                <span className="text-[10px] text-zinc-500 font-bold uppercase">Estimativa Final</span>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 border-t border-zinc-800/50 pt-3 flex items-center justify-between">
+                                            <div className="flex flex-col">
+                                                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Sobra Atual</span>
+                                                <span className="text-xs font-semibold text-zinc-300 font-mono">{formatCurrency(activeReportStats?.partialSurplus || 0)}</span>
+                                            </div>
+                                            {/* Emerald accent glow */}
+                                            <div className="absolute top-0 right-0 w-1 h-full bg-emerald-500/20"></div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {/* Row 2: Progress + OKRs */}
@@ -2052,7 +2450,7 @@ function ReportView({
                                                 <p className="text-[9px] text-zinc-500 font-medium">{daysPassed} / {totalDays} dias</p>
                                             </div>
                                         </div>
-                                        <div className="flex-1 w-full max-w-[150px]">
+                                        <div className="flex-1 w-full">
                                             <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
                                                 <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400" style={{ width: `${progress}%` }} />
                                             </div>
@@ -2061,25 +2459,44 @@ function ReportView({
                                     </div>
 
                                     {/* OKRs Card */}
-                                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-lg flex items-center justify-between gap-4">
-                                        <div className="flex items-center gap-2">
-                                            <div className="p-1.5 bg-blue-500/10 rounded-lg">
-                                                <Target className="w-4 h-4 text-blue-500" />
-                                            </div>
-                                            <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">OKRs</h3>
-                                        </div>
-                                        <div className="flex-1 space-y-2">
-                                            <div className="text-[9px] flex justify-between text-zinc-400 font-bold uppercase"><span>Mín</span><span>Ambi</span></div>
-                                            <div className="flex gap-2">
-                                                <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
-                                                    <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, (activeReportStats?.totalIncome - activeReportStats?.totalExpense - activeReportStats?.expectedDiscretionaryFuture) / report.okr_min * 100))}%` }} />
+                                    {(() => {
+                                        const okrMinPct = report.okr_min > 0 ? ((activeReportStats?.totalIncome - activeReportStats?.totalExpense - activeReportStats?.expectedDiscretionaryFuture) / report.okr_min * 100) : 0;
+                                        const okrAmbitiousPct = report.okr_ambitious > 0 ? ((activeReportStats?.totalIncome - activeReportStats?.totalExpense - activeReportStats?.expectedDiscretionaryFuture) / report.okr_ambitious * 100) : 0;
+                                        return (
+                                            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 shadow-lg flex items-center justify-between gap-4">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="p-1.5 bg-blue-500/10 rounded-lg">
+                                                        <Target className="w-4 h-4 text-blue-500" />
+                                                    </div>
+                                                    <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-widest">OKRs</h3>
                                                 </div>
-                                                <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden">
-                                                    <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, (activeReportStats?.totalIncome - activeReportStats?.totalExpense - activeReportStats?.expectedDiscretionaryFuture) / report.okr_ambitious * 100))}%` }} />
+                                                <div className="flex-1 space-y-2">
+                                                    <div className="text-[9px] flex justify-between text-zinc-400 font-bold uppercase">
+                                                        <span>
+                                                            Mín{" "}
+                                                            <span className={`font-bold ${Math.round(okrMinPct) - 100 > 0 ? 'text-emerald-400' : Math.round(okrMinPct) - 100 < 0 ? 'text-rose-400' : 'text-zinc-400'}`}>
+                                                                {(Math.round(okrMinPct) - 100) === 0 ? '' : ((Math.round(okrMinPct) - 100) > 0 ? '+' : '-')}{Math.abs(Math.round(okrMinPct) - 100)}%
+                                                            </span>
+                                                        </span>
+                                                        <span>
+                                                            Ambicioso{" "}
+                                                            <span className={`font-bold ${Math.round(okrAmbitiousPct) - 100 > 0 ? 'text-emerald-400' : Math.round(okrAmbitiousPct) - 100 < 0 ? 'text-rose-400' : 'text-zinc-400'}`}>
+                                                                {(Math.round(okrAmbitiousPct) - 100) === 0 ? '' : ((Math.round(okrAmbitiousPct) - 100) > 0 ? '+' : '-')}{Math.abs(Math.round(okrAmbitiousPct) - 100)}%
+                                                            </span>
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden relative" title={`Mínimo: ${Math.round(okrMinPct)}%`}>
+                                                            <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, okrMinPct))}%` }} />
+                                                        </div>
+                                                        <div className="flex-1 h-3 bg-zinc-800 rounded overflow-hidden relative" title={`Ambicioso: ${Math.round(okrAmbitiousPct)}%`}>
+                                                            <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, okrAmbitiousPct))}%` }} />
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    </div>
+                                        );
+                                    })()}
                                 </div>
 
                                 {/* Row 3: Wealth + End */}
@@ -2110,19 +2527,16 @@ function ReportView({
                                         </div>
                                         <div className="text-right">
                                             <span className="text-xl font-black text-white font-mono">
-                                                {formatCurrency(report.initial_patrimony + (activeReportStats?.expectedSurplus || 0))}
+                                                {(() => {
+                                                    const annualRate = (report.selic_tax || 0) / 100;
+                                                    const monthlyRate = Math.pow(1 + annualRate, 1 / 12) - 1;
+                                                    const endPatrimony = (report.initial_patrimony || 0) * (1 + monthlyRate) + (activeReportStats?.expectedSurplus || 0);
+                                                    return formatCurrency(endPatrimony);
+                                                })()}
                                             </span>
                                             <p className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">Estimativa Final</p>
                                         </div>
                                     </div>
-                                </div>
-
-                                {/* Row 4: AI Projection */}
-                                <div className="col-span-12">
-                                    <AIProjectionCard
-                                        report={report}
-                                        onCalculate={onCalculateProjection}
-                                    />
                                 </div>
                             </div>
                         </div>
@@ -2255,6 +2669,38 @@ function ReportView({
                                 setFilterOccurrence={setFilterOccurrence}
                             />
                         </div>
+                    ) : viewMode === 'incomes' ? (
+                        <div className="flex-1 overflow-y-auto custom-scrollbarbg-zinc-900 border border-zinc-800 rounded-xl">
+                            <IncomesView
+                                transactions={report.transactions || []}
+                                categories={categories}
+                                sources={sources}
+                                suppliers={suppliers}
+                                month={report.month}
+                                year={report.year}
+                                onBack={() => setViewMode('overview')}
+                                filterCategory={filterCategory}
+                                setFilterCategory={setFilterCategory}
+                                filterSource={filterSource}
+                                setFilterSource={setFilterSource}
+                                filterSupplier={filterSupplier}
+                                setFilterSupplier={setFilterSupplier}
+                                startDate={filterStartDate}
+                                setStartDate={setFilterStartDate}
+                                endDate={filterEndDate}
+                                setEndDate={setFilterEndDate}
+                            />
+                        </div>
+                    ) : viewMode === 'projection' ? (
+                        <div className="flex-1 flex flex-col min-h-0 relative">
+                            {report && (
+                                <PatrimonyProjectionCard
+                                    report={report}
+                                    config={config}
+                                    showDetailedStats={true}
+                                />
+                            )}
+                        </div>
                     ) : (
                         <div className="flex flex-col h-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl min-h-0 relative">
                             <div className="px-6 pt-6 pb-2 bg-zinc-900 sticky top-0 z-10 rounded-t-xl">
@@ -2355,7 +2801,7 @@ function ReportView({
                             initial={{ opacity: 0, scale: 0.95, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                            className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl p-6 w-full max-w-md relative z-10"
+                            className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto relative z-10"
                         >
                             <button
                                 onClick={() => setShowFilterModal(false)}
@@ -2366,86 +2812,86 @@ function ReportView({
                             </button>
                             <h3 className="text-lg font-black tracking-tighter uppercase text-white mb-6">Filtros de Transações</h3>
 
-                            <div className="space-y-4">
-                                <CustomSelect
-                                    label="Tipo de Transação"
-                                    multiple
-                                    value={filterType}
-                                    onChange={setFilterType}
-                                    options={[{ value: 'expense', label: 'Despesa', icon: 'ArrowDownCircle' }, { value: 'income', label: 'Receita', icon: 'ArrowUpCircle' }]}
-                                />
-                                <CustomSelect
-                                    label="Fonte"
-                                    multiple
-                                    value={filterSource}
-                                    onChange={setFilterSource}
-                                    options={availableSources}
-                                />
-                                <CustomSelect
-                                    label="Categoria"
-                                    multiple
-                                    value={filterCategory}
-                                    onChange={setFilterCategory}
-                                    options={availableCategories}
-                                />
-                                <CustomSelect
-                                    label="Fornecedor"
-                                    multiple
-                                    value={filterSupplier}
-                                    onChange={setFilterSupplier}
-                                    options={availableSuppliers}
-                                />
-                                <CustomSelect
-                                    label="Cartão"
-                                    multiple
-                                    value={filterCard}
-                                    onChange={setFilterCard}
-                                    options={availableCards}
-                                />
-                                <CustomSelect
-                                    label="Tipo de Gasto"
-                                    multiple
-                                    value={filterMandatory}
-                                    onChange={setFilterMandatory}
-                                    options={[
-                                        { value: 'mandatory', label: 'OBRIGATÓRIO', icon: 'AlertCircle' },
-                                        { value: 'discretionary', label: 'DISCRICIONÁRIO', icon: 'Coffee' }
-                                    ]}
-                                />
-                                <CustomSelect
-                                    label="Ocorrência"
-                                    multiple
-                                    value={filterOccurrence}
-                                    onChange={setFilterOccurrence}
-                                    options={[
-                                        { value: 'occasional', label: 'Ocasional', icon: 'Calendar' },
-                                        { value: 'recurring', label: 'Recorrente', icon: 'Repeat' }
-                                    ]}
-                                />
-                                <div className="flex items-center gap-2 p-3 bg-zinc-800 rounded-lg border border-zinc-700 cursor-pointer" onClick={() => setFilterDuplicate(!filterDuplicate)}>
-                                    <input type="checkbox" checked={filterDuplicate} readOnly className="accent-emerald-500" />
-                                    <span className="text-xs font-bold text-zinc-300">Apenas Risco de Duplicidade</span>
+                            <div className="flex flex-col lg:flex-row gap-6">
+                                <div className="flex-1">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <CustomSelect
+                                            label="Tipo de Transação"
+                                            multiple
+                                            value={filterType}
+                                            onChange={setFilterType}
+                                            options={[{ value: 'expense', label: 'Despesa', icon: 'ArrowDownCircle' }, { value: 'income', label: 'Receita', icon: 'ArrowUpCircle' }]}
+                                        />
+                                        <CustomSelect
+                                            label="Fonte"
+                                            multiple
+                                            value={filterSource}
+                                            onChange={setFilterSource}
+                                            options={availableSources}
+                                        />
+                                        <CustomSelect
+                                            label="Categoria"
+                                            multiple
+                                            value={filterCategory}
+                                            onChange={setFilterCategory}
+                                            options={availableCategories}
+                                        />
+                                        <CustomSelect
+                                            label="Fornecedor"
+                                            multiple
+                                            value={filterSupplier}
+                                            onChange={setFilterSupplier}
+                                            options={availableSuppliers}
+                                        />
+                                        <CustomSelect
+                                            label="Cartão"
+                                            multiple
+                                            value={filterCard}
+                                            onChange={setFilterCard}
+                                            options={availableCards}
+                                        />
+                                        <CustomSelect
+                                            label="Tipo de Gasto"
+                                            multiple
+                                            value={filterMandatory}
+                                            onChange={setFilterMandatory}
+                                            options={[
+                                                { value: 'mandatory', label: 'OBRIGATÓRIO', icon: 'AlertCircle' },
+                                                { value: 'discretionary', label: 'DISCRICIONÁRIO', icon: 'Coffee' }
+                                            ]}
+                                        />
+                                        <CustomSelect
+                                            label="Ocorrência"
+                                            multiple
+                                            value={filterOccurrence}
+                                            onChange={setFilterOccurrence}
+                                            options={[
+                                                { value: 'occasional', label: 'Ocasional', icon: 'Calendar' },
+                                                { value: 'recurring', label: 'Recorrente', icon: 'Repeat' }
+                                            ]}
+                                        />
+                                        <div className="flex flex-col gap-1.5">
+                                            <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Outras Opções</label>
+                                            <div className="flex items-center gap-2 p-3 bg-[#18181b] border border-zinc-800 rounded-xl cursor-pointer hover:bg-zinc-800/40 transition-all h-[46px]" onClick={() => setFilterDuplicate(!filterDuplicate)}>
+                                                <input type="checkbox" checked={filterDuplicate} readOnly className="accent-emerald-500 w-4 h-4 rounded border-zinc-700 bg-zinc-950 focus:ring-emerald-500" />
+                                                <span className="text-xs font-bold text-zinc-300">Risco de Duplicidade</span>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Início</label>
-                                    <input
-                                        type="date"
-                                        value={filterStartDate}
-                                        onChange={e => setFilterStartDate(e.target.value)}
-                                        className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 text-zinc-200 text-xs focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                                    />
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Data Fim</label>
-                                    <input
-                                        type="date"
-                                        value={filterEndDate}
-                                        onChange={e => setFilterEndDate(e.target.value)}
-                                        className="bg-[#18181b] border border-zinc-800 rounded-xl px-4 py-3 text-zinc-200 text-xs focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                                    />
+                                <div className="w-full lg:w-[280px] shrink-0 border-t lg:border-t-0 lg:border-l border-zinc-800/50 pt-5 lg:pt-0 lg:pl-6">
+                                    <div className="flex flex-col gap-1.5 w-full">
+                                        <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest pl-1">Período para Consulta</label>
+                                        <CustomDateRangePicker
+                                            startDate={filterStartDate}
+                                            setStartDate={setFilterStartDate}
+                                            endDate={filterEndDate}
+                                            setEndDate={setFilterEndDate}
+                                            reportMonth={report?.month}
+                                            reportYear={report?.year}
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
@@ -2498,12 +2944,16 @@ function ProjectionSection({
         return dataMax / (dataMax - dataMin);
     }, [projectionData]);
 
+    const monthsLabel = months < 12
+        ? `${months} meses`
+        : `${months / 12} ${months / 12 === 1 ? 'ano' : 'anos'}`;
+
     return (
         <div className="flex-1 flex flex-col min-h-0">
             <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center gap-4">
                     <div>
-                        <h3 className="text-sm font-bold text-white uppercase tracking-tight">Projeção de Patrimônio ({months} meses)</h3>
+                        <h3 className="text-sm font-bold text-white uppercase tracking-tight">Projeção de Patrimônio ({monthsLabel})</h3>
                         <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Base Selic: {report.selic_tax}% ± 0.75%</p>
                     </div>
                 </div>
@@ -2512,11 +2962,20 @@ function ProjectionSection({
                         value={months}
                         onChange={(val) => setMonths(Number(val))}
                         options={[
-                            { value: 3, label: '3M' },
-                            { value: 6, label: '6M' },
-                            { value: 12, label: '1Y' },
+                            { value: 3, label: '3 Meses' },
+                            { value: 6, label: '6 Meses' },
+                            { value: 12, label: '1 Ano' },
+                            { value: 24, label: '2 Anos' },
+                            { value: 36, label: '3 Anos' },
+                            { value: 48, label: '4 Anos' },
+                            { value: 60, label: '5 Anos' },
+                            { value: 72, label: '6 Anos' },
+                            { value: 84, label: '7 Anos' },
+                            { value: 96, label: '8 Anos' },
+                            { value: 108, label: '9 Anos' },
+                            { value: 120, label: '10 Anos' },
                         ]}
-                        className="w-20"
+                        className="w-28"
                         buttonClassName="px-3 h-[26px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-bold rounded border border-zinc-700 uppercase tracking-tighter pr-6 flex items-center justify-between"
                     />
                     <button
@@ -2549,6 +3008,7 @@ function ProjectionSection({
                                             <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">{d.month}</p>
                                             <p className="text-sm font-bold text-white">{formatCurrency(d.patrimony)}</p>
                                             <div className="mt-1 space-y-0.5">
+                                                <p className="text-[9px] text-zinc-400">Sobra: <span className="text-indigo-400">{formatCurrency(d.surplus ?? 0)}</span></p>
                                                 <p className="text-[9px] text-zinc-400">Juros: <span className="text-emerald-500">{formatCurrency(d.interest)}</span></p>
                                                 <p className="text-[9px] text-zinc-400">Taxa: <span className="text-blue-400">{d.selic}%</span></p>
                                             </div>
@@ -2614,7 +3074,7 @@ function StatCard({
     miniValueTooltip
 }: any) {
     return (
-        <div className={`bg-zinc-900 border border-zinc-800 p-4 rounded-xl shadow-lg relative min-h-[100px] flex flex-col justify-between transition-all duration-500 ${gradient ? 'bg-gradient-to-br from-zinc-900 to-zinc-800' : ''}`}>
+        <div className={`bg-zinc-900 border border-zinc-800 p-4 rounded-xl shadow-lg relative min-h-[100px] flex flex-col justify-between transition-all duration-500 ${gradient ? 'bg-gradient-to-br from-zinc-900 to-zinc-800' : ''}`} style={{ overflow: "hidden" }}>
             <div>
                 <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-1">{title}</p>
                 <div className="flex items-baseline gap-2">
@@ -2667,9 +3127,7 @@ function StatCard({
                     <div className="flex gap-2">
                         <span className="text-[9px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-400 font-bold uppercase tracking-tight">{split}</span>
                     </div>
-                ) : (
-                    <p className="text-[10px] text-zinc-500 font-bold uppercase opacity-50">Consolidado</p>
-                )}
+                ) : (<></>)}
             </div>
 
             {highlight && <div className="absolute top-0 right-0 w-1 h-full bg-emerald-500/20"></div>}
@@ -2745,6 +3203,16 @@ function TransactionItem({ t, onDelete, onClick, categories, sources, isDuplicat
                         </div>
                     )}
                     {!t.is_recurring && t.type === 'expense' && (
+                        <div className="px-1 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+                            OCASIONAL
+                        </div>
+                    )}
+                    {t.type === 'income' && !!t.is_recurring && (
+                        <div className="px-1 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+                            {(t.remaining_recurrence !== null && (t.remaining_recurrence ?? 0) > 0) ? `RECORRENTE (${t.remaining_recurrence})` : 'RECORRENTE'}
+                        </div>
+                    )}
+                    {t.type === 'income' && !t.is_recurring && (
                         <div className="px-1 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             OCASIONAL
                         </div>
@@ -3043,7 +3511,7 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
             <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="bg-[#121212] border border-zinc-800 w-full max-w-md min-h-[600px] rounded-3xl p-8 shadow-2xl flex flex-col relative"
+                className="bg-[#121212] border border-zinc-800 w-full max-w-md md:max-w-4xl min-h-[500px] rounded-3xl p-8 shadow-2xl flex flex-col relative"
             >
                 {isSubmitting && <div className="absolute inset-0 bg-black/10 z-[60] rounded-3xl cursor-wait" />}
                 <div className="flex items-center justify-between mb-6">
@@ -3060,14 +3528,14 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                 <div className="flex bg-[#18181b] p-1 rounded-2xl border border-zinc-800 mb-6 font-sans">
                     <button
                         disabled={isSubmitting || !!transaction}
-                        onClick={() => setFormData({ ...formData, type: 'expense', supplier_id: null, categories: [] })}
+                        onClick={() => setFormData({ ...formData, type: 'expense', supplier_id: null, category_id: null })}
                         className={`flex-1 py-1.5 rounded-xl text-[10px] uppercase font-black tracking-widest transition-all ${formData.type === 'expense' ? 'bg-red-500 text-white shadow-lg' : 'text-zinc-600 hover:text-zinc-400'} disabled:opacity-50`}
                     >
                         Despesa
                     </button>
                     <button
                         disabled={isSubmitting || !!transaction}
-                        onClick={() => setFormData({ ...formData, type: 'income', supplier_id: null, categories: [] })}
+                        onClick={() => setFormData({ ...formData, type: 'income', supplier_id: null, category_id: null })}
                         className={`flex-1 py-1.5 rounded-xl text-[10px] uppercase font-black tracking-widest transition-all ${formData.type === 'income' ? 'bg-emerald-500 text-emerald-950 shadow-lg' : 'text-zinc-600 hover:text-zinc-400'} disabled:opacity-50`}
                     >
                         Receita
@@ -3075,7 +3543,7 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                 </div>
 
                 <div className="flex-1 space-y-5 custom-scrollbar overflow-y-auto pr-1">
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-5 items-start">
                         <div className="space-y-1.5">
                             <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-1.5 block">Data</label>
                             <input
@@ -3088,6 +3556,7 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                                 className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 h-[38px] focus:outline-none text-zinc-200 disabled:opacity-50 text-xs font-bold"
                             />
                         </div>
+
                         <div className="space-y-1.5">
                             <CustomSelect
                                 label="Fonte"
@@ -3097,63 +3566,66 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                                 options={sources.map((s: Source) => ({ value: s.id, label: s.name, icon: s.icon }))}
                             />
                         </div>
-                    </div>
-                    {isCardSource && (
-                        <div className="space-y-1.5 pt-1">
+
+                        {isCardSource && (
+                            <div className="space-y-1.5">
+                                <CustomSelect
+                                    label="Cartão"
+                                    disabled={isSubmitting}
+                                    value={formData.card_id}
+                                    onChange={val => setFormData({ ...formData, card_id: val })}
+                                    options={cards.map((c: any) => ({ value: c.id, label: c.name, logo: c.logo }))}
+                                />
+                            </div>
+                        )}
+
+                        <div className="space-y-1.5">
                             <CustomSelect
-                                label="Cartão"
+                                label="Fornecedor"
                                 disabled={isSubmitting}
-                                value={formData.card_id}
-                                onChange={val => setFormData({ ...formData, card_id: val })}
-                                options={cards.map((c: any) => ({ value: c.id, label: c.name, logo: c.logo }))}
+                                value={formData.supplier_id}
+                                onChange={handleSupplierChange}
+                                options={filteredSuppliers.map((s: any) => ({
+                                    value: s.id,
+                                    label: s.name,
+                                    icon: s.logo || 'Package'
+                                }))}
                             />
                         </div>
-                    )}
 
-                    <div className="space-y-1.5">
-                        <CustomSelect
-                            label="Fornecedor"
-                            disabled={isSubmitting}
-                            value={formData.supplier_id}
-                            onChange={handleSupplierChange}
-                            options={filteredSuppliers.map((s: any) => ({
-                                value: s.id,
-                                label: s.name,
-                                icon: s.logo || 'Package'
-                            }))}
-                        />
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <CustomSelect
-                            label="Categoria"
-                            disabled={isSubmitting || !formData.supplier_id}
-                            value={formData.category_id}
-                            onChange={val => setFormData({ ...formData, category_id: val })}
-                            options={filteredCategories.map((c: Category) => ({
-                                value: c.id,
-                                label: c.name,
-                                icon: c.icon
-                            }))}
-                        />
-                    </div>
-
-                    {formData.type === 'expense' && (
-                        <div className="space-y-4">
+                        <div className="space-y-1.5">
                             <CustomSelect
-                                label="Tipo de Despesa"
-                                disabled={isSubmitting}
-                                value={formData.is_mandatory ? 'mandatory' : 'discretionary'}
-                                onChange={val => setFormData({
-                                    ...formData,
-                                    is_mandatory: val === 'mandatory'
-                                })}
-                                options={[
-                                    { value: 'mandatory', label: 'OBRIGATÓRIO' },
-                                    { value: 'discretionary', label: 'DISCRICIONÁRIO' }
-                                ]}
+                                label="Categoria"
+                                disabled={isSubmitting || !formData.supplier_id}
+                                value={formData.category_id}
+                                onChange={val => setFormData({ ...formData, category_id: val })}
+                                options={filteredCategories.map((c: Category) => ({
+                                    value: c.id,
+                                    label: c.name,
+                                    icon: c.icon
+                                }))}
                             />
+                        </div>
 
+                        {formData.type === 'expense' && (
+                            <div className="space-y-1.5">
+                                <CustomSelect
+                                    label="Tipo de Despesa"
+                                    disabled={isSubmitting}
+                                    value={formData.is_mandatory ? 'mandatory' : 'discretionary'}
+                                    onChange={val => setFormData({
+                                        ...formData,
+                                        is_mandatory: val === 'mandatory'
+                                    })}
+                                    options={[
+                                        { value: 'mandatory', label: 'OBRIGATÓRIO' },
+                                        { value: 'discretionary', label: 'DISCRICIONÁRIO' }
+                                    ]}
+                                />
+                            </div>
+                        )}
+
+                        <div className="space-y-1.5">
                             <CustomSelect
                                 label="Tipo de Ocorrência"
                                 disabled={isSubmitting}
@@ -3168,39 +3640,39 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                                     { value: 'recurring', label: 'RECORRENTE' }
                                 ]}
                             />
-
-                            {formData.is_recurring && (
-                                <div className="space-y-1.5 w-full">
-                                    <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest block pl-1 text-center">Ocorrências Restantes</label>
-                                    <input
-                                        type="number"
-                                        value={formData.remaining_recurrence}
-                                        onChange={e => setFormData({ ...formData, remaining_recurrence: e.target.value })}
-                                        placeholder="Indefinido"
-                                        disabled={isSubmitting}
-                                        className="w-full bg-[#18181b] border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-center text-white placeholder-zinc-700 outline-none focus:border-zinc-500 transition-colors"
-                                    />
-                                    <p className="text-[10px] text-zinc-600 pl-1 text-center mt-1">Deixe vazio se for indefinido</p>
-                                </div>
-                            )}
                         </div>
-                    )}
 
-                    <div className="space-y-1.5 pt-2">
-                        <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest text-center block mb-1.5">Valor</label>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                disabled={isSubmitting}
-                                value={new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(formData.value)}
-                                onChange={e => {
-                                    const rawValue = e.target.value.replace(/\D/g, "");
-                                    const numericValue = Number(rawValue) / 100;
-                                    setFormData({ ...formData, value: numericValue });
-                                }}
-                                className="w-full bg-[#18181b] border border-zinc-800 rounded-2xl px-6 py-5 focus:outline-none font-black text-3xl text-center text-emerald-500 disabled:opacity-50 shadow-xl"
-                                autoFocus={!transaction}
-                            />
+                        {formData.is_recurring && (
+                            <div className="space-y-1.5 w-full">
+                                <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest block pl-1 text-center">Ocorrências Restantes</label>
+                                <input
+                                    type="number"
+                                    value={formData.remaining_recurrence}
+                                    onChange={e => setFormData({ ...formData, remaining_recurrence: e.target.value })}
+                                    placeholder="Indefinido"
+                                    disabled={isSubmitting}
+                                    className="w-full bg-[#18181b] border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-center text-white placeholder-zinc-700 outline-none focus:border-zinc-500 transition-colors"
+                                />
+                                <p className="text-[10px] text-zinc-600 pl-1 text-center mt-1">Deixe vazio se for indefinido</p>
+                            </div>
+                        )}
+
+                        <div className="md:col-span-3 space-y-1.5 pt-2">
+                            <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest text-center block mb-1.5">Valor</label>
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    disabled={isSubmitting}
+                                    value={new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(formData.value)}
+                                    onChange={e => {
+                                        const rawValue = e.target.value.replace(/\D/g, "");
+                                        const numericValue = Number(rawValue) / 100;
+                                        setFormData({ ...formData, value: numericValue });
+                                    }}
+                                    className="w-full bg-[#18181b] border border-zinc-800 rounded-2xl px-6 py-5 focus:outline-none font-black text-3xl text-center text-emerald-500 disabled:opacity-50 shadow-xl"
+                                    autoFocus={!transaction}
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3306,107 +3778,6 @@ function ConfigModal({ config, categories, sources, onClose, onSave }: any) {
                                 value={localConfig.goal_target_default}
                                 onChange={(val: number) => setLocalConfig({ ...localConfig, goal_target_default: val })}
                             />
-                        </div>
-                    </div>
-
-                    <div className="space-y-4 pt-6 border-t border-zinc-800/50 group">
-                        <div className="flex items-center justify-between px-1">
-                            <div className="space-y-0.5">
-                                <h3 className="text-xs font-black text-emerald-500 uppercase tracking-[0.2em]">Receitas Padrão</h3>
-                                <p className="text-[9px] text-zinc-500 uppercase tracking-wider font-bold">Transações automáticas para novos ciclos</p>
-                            </div>
-                            <button
-                                disabled={isSubmitting}
-                                onClick={() => {
-                                    const newIncome = { name: "Nova Receita", value: 0, source_id: sources[0]?.id || "", category_id: categories.find((c: any) => c.type === 'income')?.id || "" };
-                                    setLocalConfig({ ...localConfig, default_incomes: [...localConfig.default_incomes, newIncome] });
-                                }}
-                                className="group flex items-center gap-2 p-1.5 px-4 bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/20 rounded-full transition-all active:scale-95 disabled:opacity-50"
-                            >
-                                <PlusCircle className="w-3 h-3 text-emerald-500" />
-                                <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Adicionar</span>
-                            </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-4">
-                            {localConfig.default_incomes.map((income: any, idx: number) => (
-                                <motion.div
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: idx * 0.05 }}
-                                    key={idx}
-                                    className="relative group bg-zinc-900/50 hover:bg-zinc-900 border border-zinc-800 hover:border-zinc-700/50 p-4 rounded-2xl transition-all"
-                                >
-                                    <div className="space-y-3">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-center shrink-0">
-                                                <Icon name={sources.find((s: any) => s.id === income.source_id)?.icon || "Wallet"} className="w-3.5 h-3.5 text-emerald-500/50" />
-                                            </div>
-                                            <input
-                                                disabled={isSubmitting}
-                                                className="flex-1 bg-transparent text-sm font-bold text-zinc-100 focus:outline-none placeholder:text-zinc-700 disabled:opacity-50"
-                                                placeholder="Nome da Receita"
-                                                value={income.name}
-                                                onChange={e => {
-                                                    const updated = [...localConfig.default_incomes];
-                                                    updated[idx].name = e.target.value;
-                                                    setLocalConfig({ ...localConfig, default_incomes: updated });
-                                                }}
-                                            />
-                                            <button
-                                                disabled={isSubmitting}
-                                                onClick={() => {
-                                                    const updated = localConfig.default_incomes.filter((_: any, i: number) => i !== idx);
-                                                    setLocalConfig({ ...localConfig, default_incomes: updated });
-                                                }}
-                                                className="p-1.5 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30"
-                                            >
-                                                <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                        </div>
-
-                                        <MoneyInput
-                                            disabled={isSubmitting}
-                                            value={income.value}
-                                            onChange={(val: number) => {
-                                                const updated = [...localConfig.default_incomes];
-                                                updated[idx].value = val;
-                                                setLocalConfig({ ...localConfig, default_incomes: updated });
-                                            }}
-                                        />
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <CustomSelect
-                                                disabled={isSubmitting}
-                                                value={income.source_id}
-                                                buttonClassName="bg-[#18181b] border border-zinc-800 py-3 pl-3 pr-10 text-left min-h-[46px] text-zinc-200 sm:text-xs font-bold hover:bg-zinc-800/80 rounded-xl"
-                                                onChange={val => {
-                                                    const updated = [...localConfig.default_incomes];
-                                                    updated[idx].source_id = val;
-                                                    setLocalConfig({ ...localConfig, default_incomes: updated });
-                                                }}
-                                                options={sources.map((s: any) => ({ value: s.id, label: s.name, icon: s.icon }))}
-                                            />
-                                            <CustomSelect
-                                                disabled={isSubmitting}
-                                                value={income.category_id}
-                                                buttonClassName="bg-[#18181b] border border-zinc-800 py-3 pl-3 pr-10 text-left min-h-[46px] text-zinc-200 sm:text-xs font-bold hover:bg-zinc-800/80 rounded-xl"
-                                                onChange={val => {
-                                                    const updated = [...localConfig.default_incomes];
-                                                    updated[idx].category_id = val;
-                                                    setLocalConfig({ ...localConfig, default_incomes: updated });
-                                                }}
-                                                options={categories.filter((c: any) => c.type === 'income').map((c: any) => ({ value: c.id, label: c.name, icon: c.icon }))}
-                                            />
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            ))}
-                            {localConfig.default_incomes.length === 0 && (
-                                <div className="col-span-full py-12 flex flex-col items-center justify-center border-2 border-dashed border-zinc-800/50 rounded-[32px] bg-zinc-900/10">
-                                    <PlusCircle className="w-8 h-8 text-zinc-800 mb-2" />
-                                    <p className="text-[10px] text-zinc-600 uppercase font-bold tracking-widest">Nenhuma receita padrão configurada</p>
-                                </div>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -3567,16 +3938,23 @@ function EditReportModal({ report, onClose, onSubmit }: any) {
     );
 }
 
-function ConfirmModal({ title, message, onConfirm, onClose, variant }: any) {
+function ConfirmModal({ title, message, onConfirm, onClose, variant, showPropagationInput = false }: any) {
+    const [propagationInput, setPropagationInput] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const checkValue = propagationInput.trim().toUpperCase();
+    const isSim = checkValue === "SIM";
+    const isNao = checkValue === "NÃO" || checkValue === "NAO";
+    const isButtonEnabled = showPropagationInput ? (isSim || isNao) : true;
+
     const handleConfirm = async () => {
-        if (isSubmitting) return;
+        if (isSubmitting || !isButtonEnabled) return;
         setIsSubmitting(true);
         setError(null);
         try {
-            const result = await onConfirm();
+            const passPropagate = showPropagationInput ? isSim : undefined;
+            const result = await onConfirm(passPropagate);
             if (result && result.error) {
                 setError(result.error);
             }
@@ -3607,6 +3985,24 @@ function ConfirmModal({ title, message, onConfirm, onClose, variant }: any) {
                 <h2 className="text-xl font-bold mb-2 text-white">{title}</h2>
                 <p className="text-sm text-zinc-400 mb-6 leading-relaxed px-2">{isSubmitting ? (variant === 'warning' ? "Processando..." : "Processando exclusão...") : message}</p>
 
+                {showPropagationInput && (
+                    <div className="w-full mb-6 text-left">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-2 text-center">
+                            Deseja propagar essa alteração aos outros relatórios?
+                        </label>
+                        <span className="text-xs text-zinc-400 block mb-3 text-center leading-relaxed">
+                            Se for propagada, todos os relatórios subsequentes serão reescritos. Digite <strong>SIM</strong> ou <strong>NÃO</strong> para prosseguir:
+                        </span>
+                        <input
+                            type="text"
+                            className="w-full bg-zinc-950 border border-zinc-800 text-white rounded-xl py-3 px-4 text-center text-sm font-bold uppercase tracking-wider focus:outline-none focus:border-zinc-700 transition-all placeholder:text-zinc-600"
+                            placeholder="SIM / NÃO"
+                            value={propagationInput}
+                            onChange={(e) => setPropagationInput(e.target.value)}
+                        />
+                    </div>
+                )}
+
                 {error && (
                     <div className="mb-6 w-full p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-xs font-bold uppercase tracking-widest flex items-center justify-start gap-2 text-left">
                         <AlertCircle className="w-4 h-4 shrink-0" />
@@ -3616,7 +4012,7 @@ function ConfirmModal({ title, message, onConfirm, onClose, variant }: any) {
 
                 <div className="flex flex-col w-full gap-3">
                     <button
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || !isButtonEnabled}
                         onClick={handleConfirm}
                         className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl active:scale-95 ${variant === 'danger' ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'} disabled:opacity-50`}
                     >
@@ -5167,9 +5563,9 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
 
         // Filter transactions: ignore those where the alias doesn't exist or isn't linked to a supplier
         const filtered = initialTransactions.filter((t: any) => {
-            if (!t.aliasName) return true;
-            const alias = aliases.find((a: any) => a.name === t.aliasName);
-            return alias && alias.supplier_id;
+            // if (!t.aliasName) return true;
+            // const alias = aliases.find((a: any) => a.name === t.aliasName?.toUpperCase()?.trim());
+            return t.supplier_id;
         });
 
         // Sort by date, then by original index to maintain order
@@ -5448,7 +5844,7 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
                                 </div>
 
                                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${t.type === 'income' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-white/5 text-zinc-400'} border border-zinc-800`}>
-                                    <Icon name={supplier?.logo || (categories.find(c => c.id === t.category_id)?.icon) || (t.type === 'income' ? 'ArrowUpCircle' : 'ArrowDownCircle')} className="w-6 h-6" />
+                                    <Icon name={supplier?.logo || (categories.find((c: any) => c.id === t.category_id)?.icon) || (t.type === 'income' ? 'ArrowUpCircle' : 'ArrowDownCircle')} className="w-6 h-6" />
                                 </div>
 
                                 <div className="flex-1 min-w-0">

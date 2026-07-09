@@ -21,8 +21,10 @@ export interface Transaction {
   source_id: string;
   date: string;
   is_mandatory: boolean;
-  is_recurring: boolean;
-  remaining_recurrence?: number;
+  is_non_recurring_mandatory: boolean;
+  is_recurring?: boolean;
+  is_auto?: boolean | number;
+  remaining_recurrence?: number | null;
   category_id?: string;
   supplier_id?: string;
   supplier_name?: string;
@@ -47,6 +49,7 @@ export interface Report {
   projected_surplus?: number;
   projection_date?: string;
   projection_reason?: string;
+  is_current?: number | boolean;
 }
 
 export interface DefaultIncomeConfig {

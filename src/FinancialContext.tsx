@@ -4,17 +4,14 @@ import { Report, GlobalConfig } from './types';
 type Mode = 'historical' | 'current' | 'default';
 
 interface FinancialContextType {
+  reports: Report[];
   dailySpentMode: Mode;
   setDailySpentMode: (mode: Mode) => void;
-  surplusProjectionMode: Mode;
-  setSurplusProjectionMode: (mode: Mode) => void;
 
   // Resolved values based on current context
   dailySpentValues: { historical: number; current: number; default: number };
-  surplusValues: { historical: number; current: number; default: number };
 
   selectedDailyValue: number;
-  selectedSurplusValue: number;
 
   // We'll also expose the stats for the "active" report as calculated by the context
   activeReportStats: any;
@@ -26,14 +23,16 @@ function getNow() {
   return today;
 }
 
-function getFinalDate(dateStr: string) {
+function getFinalDate(dateStr: any) {
   const date = new Date(dateStr);
+  date.setHours(date.getHours() + 3);
   date.setHours(23, 59, 59, 999);
   return date;
 }
 
-function getInitialDate(dateStr: string) {
+function getInitialDate(dateStr: any) {
   const date = new Date(dateStr);
+  date.setHours(date.getHours() + 3);
   date.setHours(0, 0, 0, 0);
   return date;
 }
@@ -47,9 +46,55 @@ export const FinancialProvider: React.FC<{
   config: GlobalConfig | null;
 }> = ({ children, reports, activeReport, config }) => {
   const [dailySpentMode, setDailySpentMode] = useState<Mode>('historical');
-  const [surplusProjectionMode, setSurplusProjectionMode] = useState<Mode>('current');
 
-  // 1. Calculate Historical Averages
+  // Find the report that includes the current date (for the home page fallback)
+  const refReport = useMemo(() => {
+    const now = new Date();
+    const nowStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+
+    const matches = reports
+      .filter(r => r.start_date <= nowStr && r.end_date >= nowStr)
+      .sort((a, b) => a.start_date.localeCompare(b.start_date));
+
+    return matches.length > 0 ? matches[0] : null;
+  }, [reports]);
+
+  // Helper to calculate historical daily spent for any target report
+  const getHistoricalSpentForReport = useMemo(() => {
+    return (targetReport: Report | null): number => {
+      if (!targetReport) return config?.daily_spent_avg || 0;
+
+      const priorReports = reports.filter(r => r.start_date < targetReport.start_date);
+      if (priorReports.length === 0) return config?.daily_spent_avg || 0;
+
+      let totalDiscretionaryRecurring = 0;
+      let totalPriorDays = 0;
+
+      priorReports.forEach(r => {
+        if (!r.transactions) return;
+        const recurringDiscretionary = r.transactions
+          .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+          .reduce((sum, t) => sum + Number(t.value), 0);
+
+        const startDate = getInitialDate(r.start_date);
+        const endDate = getFinalDate(r.end_date);
+        const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+        totalDiscretionaryRecurring += recurringDiscretionary;
+        totalPriorDays += days;
+      });
+
+      return totalPriorDays > 0 ? totalDiscretionaryRecurring / totalPriorDays : (config?.daily_spent_avg || 0);
+    };
+  }, [reports, config]);
+
+  // Historical Daily Spent for the current view context
+  const historicalDailySpent = useMemo(() => {
+    const reportToUse = activeReport || refReport;
+    return getHistoricalSpentForReport(reportToUse);
+  }, [activeReport, refReport, getHistoricalSpentForReport]);
+
+  // 1. Calculate Historical Averages (kept for surplus)
   const historicalAverages = useMemo(() => {
     if (reports.length === 0) return { surplus: 0, dailySpent: config?.daily_spent_avg || 0 };
 
@@ -121,35 +166,33 @@ export const FinancialProvider: React.FC<{
 
     if (!targetReport || !targetReport.transactions) return null;
 
-    const now = new Date();
+    console.log({ targetReport })
+
+    const now = getNow();
     const transactions = targetReport.transactions || [];
-    // Use local date for comparison
-    const nowStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
 
     const allKnownIncome = transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.value), 0);
     const allKnownExpenses = transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.value), 0);
     const allMandatoryExpense = transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((acc, t) => acc + Number(t.value), 0);
 
-    const actualExpense = transactions.filter(t => t.type === 'expense' && t.date <= nowStr).reduce((acc, t) => acc + Number(t.value), 0);
-    const actualMandatoryExpense = transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory) && t.date <= nowStr).reduce((acc, t) => acc + Number(t.value), 0);
+    const startDate = getInitialDate((targetReport.start_date));
+    const endDate = getFinalDate((targetReport.end_date));
 
-    const start = new Date(targetReport.start_date + "T00:00:00");
-    const end = new Date(targetReport.end_date + "T23:59:59");
+    const nowIsOnPeriod = now >= startDate && now <= endDate;
 
-    const totalDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-    const daysFromStart = Math.ceil((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+    const totalDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+    const daysPassed = Math.min(totalDays, Math.max(0, Math.ceil((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))));
+    let daysRemaining = (Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)))) - (nowIsOnPeriod ? 1 : 0);
+    if (daysRemaining < 0) daysRemaining = 0;
 
-    // Days passed context: capped between 0 and totalDays. 
-    // If today is day 1, daysPassed is 1.
-    const daysPassed = Math.max(0, Math.min(totalDays, daysFromStart));
-    const daysRemaining = totalDays - daysPassed;
-
-    // Average: (Total Discretionary in report) / (Days Passed)
-    const totalDiscretionary = allKnownExpenses - allMandatoryExpense;
-    const currentDailyAvg = daysPassed > 0 ? totalDiscretionary / daysPassed : 0;
+    // Average: (Total Discretionary Recurring in report) / (Days Passed)
+    const totalDiscretionaryRecurring = transactions
+      .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+      .reduce((sum, t) => sum + Number(t.value), 0);
+    const currentDailyAvg = daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
 
     // Resolve daily spent base for projection
-    let dailyBase = historicalAverages.dailySpent;
+    let dailyBase = getHistoricalSpentForReport(targetReport);
     if (dailySpentMode === 'current') dailyBase = currentDailyAvg;
     if (dailySpentMode === 'default') dailyBase = config?.daily_spent_estimate_default || 0;
 
@@ -167,33 +210,23 @@ export const FinancialProvider: React.FC<{
       expectedDiscretionaryFuture: projectedVariableExpense,
       daysRemaining
     };
-  }, [activeReport, reports, dailySpentMode, historicalAverages, config]);
+  }, [activeReport, reports, dailySpentMode, getHistoricalSpentForReport, config]);
 
   const dailySpentValues = {
-    historical: historicalAverages.dailySpent,
+    historical: historicalDailySpent,
     current: activeReportStats?.currentDailyAvg || 0,
     default: config?.daily_spent_estimate_default || 0
   };
 
-  const surplusValues = {
-    historical: historicalAverages.surplus,
-    current: activeReportStats?.expectedSurplus || 0,
-    default: config?.okr_min_default || 0
-  };
-
   const selectedDailyValue = dailySpentValues[dailySpentMode];
-  const selectedSurplusValue = surplusValues[surplusProjectionMode];
 
   return (
     <FinancialContext.Provider value={{
+      reports,
       dailySpentMode,
       setDailySpentMode,
-      surplusProjectionMode,
-      setSurplusProjectionMode,
       dailySpentValues,
-      surplusValues,
       selectedDailyValue,
-      selectedSurplusValue,
       activeReportStats
     }}>
       {children}
