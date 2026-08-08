@@ -50,7 +50,7 @@ function getStatsForReport(report: Report, config: GlobalConfig | null, dailySpe
     const daysRemaining = totalDays - daysPassed;
 
     const totalDiscretionaryRecurring = transactions
-        .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+        .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
         .reduce((sum, t) => sum + Number(t.value), 0);
     const currentDailyAvg = daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
 
@@ -137,7 +137,7 @@ export const ProjectionView = ({
         const rate = Math.pow(1 + annualRate, 1 / 12) - 1;
 
         // Month 0 (Base month)
-        const startObj = new Date(baseReport.year, baseReport.month - 1, 1);
+        const startObj = new Date(baseReport.year, baseReport.month, 1);
         const label0 = `${SHORT_MONTH_NAMES[startObj.getMonth()]}/${String(startObj.getFullYear()).slice(-2)}`;
 
         const initialPatrimony = baseReport.initial_patrimony;
@@ -165,7 +165,9 @@ export const ProjectionView = ({
             return {
                 type: t.type,
                 value: Number(t.value),
-                remaining: rem
+                remaining: rem,
+                is_mandatory: !!t.is_mandatory,
+                is_non_recurring_mandatory: !!t.is_non_recurring_mandatory
             };
         });
 
@@ -180,9 +182,26 @@ export const ProjectionView = ({
             }
 
             const activeItems = activeRecurring.filter(item => item.remaining === null || item.remaining >= 1);
-            const incomeSum = activeItems.filter(item => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
-            const expenseSum = activeItems.filter(item => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
-            const monthlySurplus = incomeSum - expenseSum - (selectedDailyValue * 30);
+
+            const totalReceitasRecorrentes = activeItems
+                .filter(item => item.type === 'income')
+                .reduce((sum, item) => sum + item.value, 0);
+
+            const totalGastosDiscricionariosDeterminados = activeItems
+                .filter(item => item.type === 'expense' && !item.is_mandatory && !item.is_non_recurring_mandatory && item.remaining !== null)
+                .reduce((sum, item) => sum + item.value, 0);
+
+            const totalGastosObrigatoriosRecorrentes = activeItems
+                .filter(item => item.type === 'expense' && (item.is_mandatory || item.is_non_recurring_mandatory))
+                .reduce((sum, item) => sum + item.value, 0);
+
+            // Determine days in that specific projected month
+            const dateObj = new Date(baseReport.year, baseReport.month + m, 1);
+            const mIndex = dateObj.getMonth();
+            const yIndex = dateObj.getFullYear();
+            const daysInMonth = new Date(yIndex, mIndex + 1, 0).getDate();
+
+            const monthlySurplus = totalReceitasRecorrentes - totalGastosDiscricionariosDeterminados - totalGastosObrigatoriosRecorrentes - (daysInMonth * selectedDailyValue);
 
             // Decrement remaining for future months
             activeRecurring = activeRecurring.map(item => {
@@ -202,8 +221,10 @@ export const ProjectionView = ({
             current = current * (1 + rate) + monthlySurplus;
             m++;
 
-            const dateObj = new Date(baseReport.year, baseReport.month + m - 1, 1);
-            const label = `${SHORT_MONTH_NAMES[dateObj.getMonth()]}/${String(dateObj.getFullYear()).slice(-2)}`;
+            const dateObjProj = new Date(baseReport.year, baseReport.month + m, 1);
+            const mIndexProj = dateObjProj.getMonth();
+            const yIndexProj = dateObjProj.getFullYear();
+            const label = `${SHORT_MONTH_NAMES[mIndexProj]}/${String(yIndexProj).slice(-2)}`;
 
             dataPoints.push({
                 monthIndex: m,
@@ -213,8 +234,8 @@ export const ProjectionView = ({
                 interest: interestEarned,
                 endPatrimony: current,
                 selic: baseReport.selic_tax,
-                recurringIncome: incomeSum,
-                recurringExpense: expenseSum
+                recurringIncome: totalReceitasRecorrentes,
+                recurringExpense: totalGastosDiscricionariosDeterminados + totalGastosObrigatoriosRecorrentes + (daysInMonth * selectedDailyValue)
             });
         }
 
@@ -264,7 +285,7 @@ export const ProjectionView = ({
     const reportOptions = useMemo(() => {
         return reports.map(r => ({
             value: r.id,
-            label: `${SHORT_MONTH_NAMES[r.month - 1]}/${r.year} ${r.is_current ? '(Atual)' : ''}`
+            label: `${SHORT_MONTH_NAMES[r.month]}/${r.year} ${r.is_current ? '(Atual)' : ''}`
         }));
     }, [reports]);
 

@@ -2,8 +2,6 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { EmptyState } from './components/EmptyState';
 import { ProjectionView } from './components/ProjectionView';
 import ReactCrop, { centerCrop, makeAspectCrop, type Crop, type PixelCrop } from 'react-image-crop';
-// TypeScript may not have ambient declarations for importing plain CSS files here.
-// @ts-ignore: Allow importing CSS with side effects
 import 'react-image-crop/dist/ReactCrop.css';
 import {
     LayoutDashboard,
@@ -1224,16 +1222,35 @@ function usePatrimonyProjection(report: Report | null, projectionMonths: number,
                 return {
                     type: t.type,
                     value: Number(t.value),
-                    remaining: rem
+                    remaining: rem,
+                    is_mandatory: !!t.is_mandatory,
+                    is_non_recurring_mandatory: !!t.is_non_recurring_mandatory
                 };
             });
 
         for (let i = 1; i <= projectionMonths; i++) {
             // Calculate active items for this subsequent month
             const activeItems = activeRecurring.filter(item => item.remaining === null || item.remaining >= 1);
-            const incomeSum = activeItems.filter(item => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
-            const expenseSum = activeItems.filter(item => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
-            const monthlySurplus = incomeSum - expenseSum - (selectedDailyValue * 30);
+
+            const totalReceitasRecorrentes = activeItems
+                .filter(item => item.type === 'income')
+                .reduce((sum, item) => sum + item.value, 0);
+
+            const totalGastosDiscricionariosDeterminados = activeItems
+                .filter(item => item.type === 'expense' && !item.is_mandatory && !item.is_non_recurring_mandatory && item.remaining !== null)
+                .reduce((sum, item) => sum + item.value, 0);
+
+            const totalGastosObrigatoriosRecorrentes = activeItems
+                .filter(item => item.type === 'expense' && (item.is_mandatory || item.is_non_recurring_mandatory))
+                .reduce((sum, item) => sum + item.value, 0);
+
+            // Determine days in that specific projected month
+            const dateObj = new Date(report.year, report.month + i, 1);
+            const mIndex = dateObj.getMonth();
+            const yIndex = dateObj.getFullYear();
+            const daysInMonth = new Date(yIndex, mIndex + 1, 0).getDate();
+
+            const monthlySurplus = totalReceitasRecorrentes - totalGastosDiscricionariosDeterminados - totalGastosObrigatoriosRecorrentes - (daysInMonth * selectedDailyValue);
 
             // Decrement remaining for next month
             activeRecurring = activeRecurring.map(item => {
@@ -1267,9 +1284,6 @@ function usePatrimonyProjection(report: Report | null, projectionMonths: number,
             // Apply interest then add the surplus for the month
             currentPatrimony = currentPatrimony + interestEarned + monthlySurplus;
 
-            const dateObj = new Date(report.year, report.month + i, 1);
-            const mIndex = dateObj.getMonth();
-            const yIndex = dateObj.getFullYear();
             data.push({
                 month: `${SHORT_MONTH_NAMES[mIndex]}/${yIndex}`,
                 patrimony: currentPatrimony,
@@ -1308,16 +1322,35 @@ function useTimeToGoal(report: Report | null, config: GlobalConfig | null) {
                 return {
                     type: t.type,
                     value: Number(t.value),
-                    remaining: rem
+                    remaining: rem,
+                    is_mandatory: !!t.is_mandatory,
+                    is_non_recurring_mandatory: !!t.is_non_recurring_mandatory
                 };
             });
 
         let m = 0;
         while (current < target && m < 1200) {
             const activeItems = activeRecurring.filter(item => item.remaining === null || item.remaining >= 1);
-            const incomeSum = activeItems.filter(item => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
-            const expenseSum = activeItems.filter(item => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
-            const monthlySurplus = incomeSum - expenseSum - (selectedDailyValue * 30);
+
+            const totalReceitasRecorrentes = activeItems
+                .filter(item => item.type === 'income')
+                .reduce((sum, item) => sum + item.value, 0);
+
+            const totalGastosDiscricionariosDeterminados = activeItems
+                .filter(item => item.type === 'expense' && !item.is_mandatory && !item.is_non_recurring_mandatory && item.remaining !== null)
+                .reduce((sum, item) => sum + item.value, 0);
+
+            const totalGastosObrigatoriosRecorrentes = activeItems
+                .filter(item => item.type === 'expense' && (item.is_mandatory || item.is_non_recurring_mandatory))
+                .reduce((sum, item) => sum + item.value, 0);
+
+            // Determine days in that specific projected month
+            const dateObj = new Date(report.year, report.month + m + 1, 1);
+            const mIndex = dateObj.getMonth();
+            const yIndex = dateObj.getFullYear();
+            const daysInMonth = new Date(yIndex, mIndex + 1, 0).getDate();
+
+            const monthlySurplus = totalReceitasRecorrentes - totalGastosDiscricionariosDeterminados - totalGastosObrigatoriosRecorrentes - (daysInMonth * selectedDailyValue);
 
             // Decrement remaining for future months
             activeRecurring = activeRecurring.map(item => {
@@ -1445,28 +1478,57 @@ function ReportListItem({ r, onClick, onDelete, config, isEdge = true }: { r: Re
         return "FINALIZADO";
     }, [r.is_current, r.start_date, r.end_date]);
 
+    const isInProgress = useMemo(() => {
+        const now = getNow();
+        const start = new Date(r.start_date);
+        const end = new Date(r.end_date);
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+        return now >= start && now <= end;
+    }, [r.start_date, r.end_date]);
+
+    const isNotStarted = useMemo(() => {
+        const now = getNow();
+        const start = new Date(r.start_date);
+        start.setHours(0, 0, 0, 0);
+        return now < start;
+    }, [r.start_date]);
+
+    const metOkrMin = useMemo(() => {
+        if (!r.transactions) return false;
+        const income = r.transactions.filter(t => t.type === 'income').reduce((a, b) => a + b.value, 0);
+        const expense = r.transactions.filter(t => t.type === 'expense').reduce((a, b) => a + b.value, 0);
+        return (income - expense) >= r.okr_min;
+    }, [r.transactions, r.okr_min]);
+
+    const metOkrAmbitious = useMemo(() => {
+        if (!r.transactions) return false;
+        const income = r.transactions.filter(t => t.type === 'income').reduce((a, b) => a + b.value, 0);
+        const expense = r.transactions.filter(t => t.type === 'expense').reduce((a, b) => a + b.value, 0);
+        return (income - expense) >= r.okr_ambitious;
+    }, [r.transactions, r.okr_ambitious]);
+
     const projection = useMemo(() => {
         if (!r.transactions) return null;
 
-        // TODO: TELA PRINCIPAL
-        const startDate = getInitialDate((r.start_date));
-        const endDate = getFinalDate((r.end_date));
+        const startDate = getInitialDate(r.start_date);
+        const endDate = getFinalDate(r.end_date);
         const now = getNow();
-
-        const nowIsOnPeriod = now >= startDate && now <= endDate;
 
         const totalDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
         const daysPassed = Math.min(totalDays, Math.max(0, Math.ceil((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))));
-        let daysRemaining = (Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)))) - (nowIsOnPeriod ? 1 : 0);
-        if (daysRemaining < 0) daysRemaining = 0;
+        let daysRemaining = Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)));
 
         const income = r.transactions.filter(t => t.type === 'income').reduce((a, b) => a + Number(b.value), 0);
         const totalExpenses = r.transactions.filter(t => t.type === 'expense').reduce((a, b) => a + Number(b.value), 0);
 
         const avgDailyExpense = (() => {
+            const today = new Date();
+            const nowStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+
             if (dailySpentMode === 'current') {
                 const totalDiscretionaryRecurring = r.transactions
-                    .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+                    .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
                     .reduce((sum, t) => sum + Number(t.value), 0);
                 return daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
             } else if (dailySpentMode === 'default') {
@@ -1482,7 +1544,7 @@ function ReportListItem({ r, onClick, onDelete, config, isEdge = true }: { r: Re
                 priorReports.forEach(item => {
                     if (!item.transactions) return;
                     const recurringDiscretionary = item.transactions
-                        .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+                        .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
                         .reduce((sum, t) => sum + Number(t.value), 0);
 
                     const sDate = getInitialDate(item.start_date);
@@ -1756,7 +1818,6 @@ function DashboardView({
                                     });
                                     return r.id === sorted[0].id || r.id === sorted[sorted.length - 1].id;
                                 })();
-                                console.log(reports)
                                 return (
                                     <ReportListItem
                                         key={r.id}
@@ -1803,14 +1864,14 @@ function getNow() {
     return today;
 }
 
-function getFinalDate(dateStr: any) {
+function getFinalDate(dateStr: string) {
     const date = new Date(dateStr);
     date.setHours(date.getHours() + 3);
     date.setHours(23, 59, 59, 999);
     return date;
 }
 
-function getInitialDate(dateStr: any) {
+function getInitialDate(dateStr: string) {
     const date = new Date(dateStr);
     date.setHours(date.getHours() + 3);
     date.setHours(0, 0, 0, 0);
@@ -2140,25 +2201,40 @@ function ReportView({
     }, [report?.transactions, filteredTransactionsList]);
 
 
-    const { daysLeft, progress, totalDays, daysPassed } = useMemo(() => {
-        if (!report) return { daysLeft: 0, progress: 0, totalDays: 0, daysPassed: 0 };
+    const { now, isTheFinalDate, start, end, daysLeft, progress, isInProgress, isNotStarted, metOkrMin, metOkrAmbitious, totalDays, daysPassed } = useMemo(() => {
+        if (!report) return { now: new Date(), isTheFinalDate: false, start: new Date(), end: new Date(), daysLeft: 0, progress: 0, isInProgress: false, isNotStarted: false, metOkrMin: false, metOkrAmbitious: false, totalDays: 0, daysPassed: 0 };
 
         const startDate = getInitialDate(report.start_date);
         const endDate = getFinalDate(report.end_date);
         const now = getNow();
 
-        const nowIsOnPeriod = now >= startDate && now <= endDate;
-
         const totalDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
         const daysPassed = Math.min(totalDays, Math.max(0, Math.ceil((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))));
-        let daysRemaining = (Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)))) - (nowIsOnPeriod ? 1 : 0);
-        if (daysRemaining < 0) daysRemaining = 0;
+        let daysRemaining = Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)));
 
         const percentage = Math.min(100, Math.max(0, (daysPassed / totalDays) * 100));
 
+        const isInProgress = now >= startDate && now <= endDate;
+        const isNotStarted = now < startDate;
+
+        const income = report.transactions?.filter(t => t.type === 'income').reduce((a, b) => a + b.value, 0) || 0;
+        const expense = report.transactions?.filter(t => t.type === 'expense').reduce((a, b) => a + b.value, 0) || 0;
+        const metOkrMin = (income - expense) >= report.okr_min;
+        const metOkrAmbitious = (income - expense) >= report.okr_ambitious;
+
+        const initialEndDate = getInitialDate(report.end_date + "T23:59:59");
+        const isTheFinalDate = now.getTime() === initialEndDate.getTime();
         return {
+            isTheFinalDate,
+            now,
+            start: startDate,
+            end: endDate,
             daysLeft: daysRemaining,
             progress: percentage,
+            isInProgress,
+            isNotStarted,
+            metOkrMin,
+            metOkrAmbitious,
             totalDays,
             daysPassed
         };
@@ -2172,8 +2248,11 @@ function ReportView({
         const allKnownExpenses = ts.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.value), 0);
         const allMandatoryExpense = ts.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((acc, t) => acc + Number(t.value), 0);
 
+        const today = new Date();
+        const nowStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+
         const totalDiscretionaryRecurring = ts
-            .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+            .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
             .reduce((acc, t) => acc + Number(t.value), 0);
         const currentDailyAvg = daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
 
@@ -2184,11 +2263,7 @@ function ReportView({
         const projectedVariableExpense = daysLeft * dailyBase;
         const expectedSurplus = allKnownIncome - allKnownExpenses - projectedVariableExpense;
         const partialSurplus = allKnownIncome - allKnownExpenses;
-        console.log({
-            daysLeft,
-            dailyBase,
-            projectedVariableExpense
-        })
+
         return {
             currentDailyAvg,
             expectedSurplus,
@@ -2211,6 +2286,7 @@ function ReportView({
         const isInPeriod = today >= start && today <= end;
         const isFutureOrToday = start >= today;
         const isOnPeriod = start <= today && end >= today;
+        console.log({ today, start, end, isInPeriod, isFutureOrToday, isOnPeriod, report });
 
         if (isOnPeriod) return "EM ANDAMENTO";
 
@@ -2353,8 +2429,8 @@ function ReportView({
                             key={mode}
                             onClick={() => setViewMode(mode)}
                             className={`flex items-center justify-center gap-1.5 h-8 rounded-full border transition-all cursor-pointer ${isActive
-                                ? 'bg-emerald-500 border-emerald-500 text-emerald-950 px-3.5 font-bold shadow-lg shadow-emerald-500/15'
-                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 w-8 px-0'
+                                    ? 'bg-emerald-500 border-emerald-500 text-emerald-950 px-3.5 font-bold shadow-lg shadow-emerald-500/15'
+                                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 w-8 px-0'
                                 }`}
                             title={label}
                             aria-label={label}
@@ -5568,6 +5644,11 @@ function ReviewTransactionsModal({ activeReport, reports, transactions: initialT
             return t.supplier_id;
         });
 
+        console.log({
+            initialTransactions,
+            filtered,
+            aliases
+        })
         // Sort by date, then by original index to maintain order
         const sorted = [...filtered].sort((a, b) => {
             if (a.date !== b.date) return a.date.localeCompare(b.date);

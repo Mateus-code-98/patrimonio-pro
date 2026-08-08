@@ -202,7 +202,7 @@ export const ExpensesView = ({
     };
 
     const renderRankList = (data: any[], title: string) => (
-        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: activeFilters.length > 0 ? "calc(100vh - 401px)" : "calc(100vh - 375px)" }}>
+        <div className="bg-zinc-800 p-4 rounded-xl flex flex-col min-h-0" style={{ maxHeight: activeFilters.length > 0 ? "calc(100vh - 427px)" : "calc(100vh - 400px)" }}>
             <h3 className="text-[10px] uppercase tracking-widest font-black text-zinc-500 mb-3 flex-shrink-0">{title}</h3>
             <div className="space-y-3 overflow-y-auto pr-2 flex-1 custom-scrollbar">
                 {data.map((item, index) => (

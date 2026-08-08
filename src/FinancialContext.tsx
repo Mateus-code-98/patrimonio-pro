@@ -70,10 +70,13 @@ export const FinancialProvider: React.FC<{
       let totalDiscretionaryRecurring = 0;
       let totalPriorDays = 0;
 
+      const now = getNow();
+      const nowStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+
       priorReports.forEach(r => {
         if (!r.transactions) return;
         const recurringDiscretionary = r.transactions
-          .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+          .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
           .reduce((sum, t) => sum + Number(t.value), 0);
 
         const startDate = getInitialDate(r.start_date);
@@ -185,9 +188,12 @@ export const FinancialProvider: React.FC<{
     let daysRemaining = (Math.ceil(Math.max(0, Math.min(totalDays - daysPassed, totalDays)))) - (nowIsOnPeriod ? 1 : 0);
     if (daysRemaining < 0) daysRemaining = 0;
 
+    const today = new Date();
+    const nowStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+
     // Average: (Total Discretionary Recurring in report) / (Days Passed)
     const totalDiscretionaryRecurring = transactions
-      .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring)
+      .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
       .reduce((sum, t) => sum + Number(t.value), 0);
     const currentDailyAvg = daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
 
