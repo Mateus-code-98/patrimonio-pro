@@ -108,7 +108,8 @@ import {
     Filter,
     ListFilter,
     Activity,
-    BarChart2
+    BarChart2,
+    MessageSquare
 } from "lucide-react";
 import {
     LineChart,
@@ -2092,6 +2093,7 @@ function ReportView({
         let totalMandatory = 0;
 
         filteredTransactionsList.forEach(t => {
+            if (t.is_cancelled) return;
             if (t.type === 'income') {
                 totalIncome += t.value;
             }
@@ -2112,6 +2114,7 @@ function ReportView({
             let discretionary = 0;
 
             filteredTransactionsList.forEach(t => {
+                if (t.is_cancelled) return;
                 if (t.date === dayString) {
                     if (t.type === 'expense') {
                         expense += t.value;
@@ -2217,8 +2220,8 @@ function ReportView({
         const isInProgress = now >= startDate && now <= endDate;
         const isNotStarted = now < startDate;
 
-        const income = report.transactions?.filter(t => t.type === 'income').reduce((a, b) => a + b.value, 0) || 0;
-        const expense = report.transactions?.filter(t => t.type === 'expense').reduce((a, b) => a + b.value, 0) || 0;
+        const income = report.transactions?.filter(t => t.type === 'income' && !t.is_cancelled).reduce((a, b) => a + b.value, 0) || 0;
+        const expense = report.transactions?.filter(t => t.type === 'expense' && !t.is_cancelled).reduce((a, b) => a + b.value, 0) || 0;
         const metOkrMin = (income - expense) >= report.okr_min;
         const metOkrAmbitious = (income - expense) >= report.okr_ambitious;
 
@@ -2244,15 +2247,15 @@ function ReportView({
 
     const filteredStats = useMemo(() => {
         const ts = filteredTransactionsList;
-        const allKnownIncome = ts.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.value), 0);
-        const allKnownExpenses = ts.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.value), 0);
-        const allMandatoryExpense = ts.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((acc, t) => acc + Number(t.value), 0);
+        const allKnownIncome = ts.filter(t => t.type === 'income' && !t.is_cancelled).reduce((acc, t) => acc + Number(t.value), 0);
+        const allKnownExpenses = ts.filter(t => t.type === 'expense' && !t.is_cancelled).reduce((acc, t) => acc + Number(t.value), 0);
+        const allMandatoryExpense = ts.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory) && !t.is_cancelled).reduce((acc, t) => acc + Number(t.value), 0);
 
         const today = new Date();
         const nowStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
 
         const totalDiscretionaryRecurring = ts
-            .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
+            .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr && !t.is_cancelled)
             .reduce((acc, t) => acc + Number(t.value), 0);
         const currentDailyAvg = daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
 
@@ -2429,8 +2432,8 @@ function ReportView({
                             key={mode}
                             onClick={() => setViewMode(mode)}
                             className={`flex items-center justify-center gap-1.5 h-8 rounded-full border transition-all cursor-pointer ${isActive
-                                    ? 'bg-emerald-500 border-emerald-500 text-emerald-950 px-3.5 font-bold shadow-lg shadow-emerald-500/15'
-                                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 w-8 px-0'
+                                ? 'bg-emerald-500 border-emerald-500 text-emerald-950 px-3.5 font-bold shadow-lg shadow-emerald-500/15'
+                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 w-8 px-0'
                                 }`}
                             title={label}
                             aria-label={label}
@@ -3250,45 +3253,59 @@ function TransactionItem({ t, onDelete, onClick, categories, sources, isDuplicat
     return (
         <div
             onClick={onClick}
-            className={`group flex items-center gap-3 p-2 hover:bg-zinc-800 rounded-lg cursor-pointer transition-all border-l-2 ${isDuplicate ? 'border-l-amber-500 bg-amber-500/5' : t.is_mandatory ? 'border-l-indigo-500/50 bg-indigo-500/5' : 'border-l-transparent hover:border-zinc-700/50'}`}
+            className={`group flex items-center gap-3 p-2 hover:bg-zinc-800 rounded-lg cursor-pointer transition-all border-l-2 ${t.is_cancelled ? 'border-l-red-500/50 bg-red-500/5 opacity-60' : isDuplicate ? 'border-l-amber-500 bg-amber-500/5' : t.is_mandatory ? 'border-l-indigo-500/50 bg-indigo-500/5' : 'border-l-transparent hover:border-zinc-700/50'}`}
         >
-            <div className={`w-8 h-8 bg-zinc-950 border border-zinc-800 rounded-lg flex items-center justify-center shrink-0 ${t.type === 'income' ? 'text-emerald-500' : 'text-zinc-500'}`}>
+            <div className={`w-8 h-8 bg-zinc-950 border border-zinc-800 rounded-lg flex items-center justify-center shrink-0 ${t.is_cancelled ? 'text-zinc-600' : t.type === 'income' ? 'text-emerald-500' : 'text-zinc-500'}`}>
                 <Icon name={t.supplier_logo || firstCatIcon || source?.icon || "Package"} className="w-4 h-4" />
             </div>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
-                    <p className="text-[11px] font-black tracking-tight text-white uppercase truncate">{t.supplier_name || catNames || "Geral"}</p>
-                    {!!t.is_mandatory && !t.is_recurring && (
+                    <p className={`text-[11px] font-black tracking-tight uppercase truncate ${t.is_cancelled ? 'line-through text-zinc-500' : 'text-white'}`}>{t.supplier_name || catNames || "Geral"}</p>
+                    {t.comment && (
+                        <div className="relative inline-block cursor-help shrink-0 [&>.tooltip-box]:hover:block z-50" onClick={(e) => e.stopPropagation()}>
+                            <MessageSquare className="w-3 h-3 text-zinc-400 hover:text-emerald-400 transition-colors" />
+                            <div className="tooltip-box absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden w-48 bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-[10px] font-sans font-medium text-zinc-200 leading-normal shadow-2xl pointer-events-none text-center">
+                                {t.comment}
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-zinc-900"></div>
+                            </div>
+                        </div>
+                    )}
+                    {!!t.is_cancelled && (
+                        <div className="px-1 py-0.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded text-[6px] font-black tracking-widest leading-none">
+                            CANCELADA
+                        </div>
+                    )}
+                    {!t.is_cancelled && !!t.is_mandatory && !t.is_recurring && (
                         <div className="px-1 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             OBRIGATÓRIO
                         </div>
                     )}
-                    {t.type === 'expense' && !t.is_mandatory && (
+                    {!t.is_cancelled && t.type === 'expense' && !t.is_mandatory && (
                         <div className="px-1 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             DISCRICIONÁRIO
                         </div>
                     )}
-                    {!!t.is_mandatory && !!t.is_recurring && (
+                    {!t.is_cancelled && !!t.is_mandatory && !!t.is_recurring && (
                         <div className="px-1 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             {(t.remaining_recurrence !== null && (t.remaining_recurrence ?? 0) > 0) ? `FIXO (${t.remaining_recurrence})` : 'FIXO'}
                         </div>
                     )}
-                    {!!t.is_recurring && t.type === 'expense' && !(!!t.is_mandatory && !!t.is_recurring) && (
+                    {!t.is_cancelled && !!t.is_recurring && t.type === 'expense' && !(!!t.is_mandatory && !!t.is_recurring) && (
                         <div className="px-1 py-0.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             {(t.remaining_recurrence !== null && (t.remaining_recurrence ?? 0) > 0) ? `RECORRENTE (${t.remaining_recurrence})` : 'RECORRENTE'}
                         </div>
                     )}
-                    {!t.is_recurring && t.type === 'expense' && (
+                    {!t.is_cancelled && !t.is_recurring && t.type === 'expense' && (
                         <div className="px-1 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             OCASIONAL
                         </div>
                     )}
-                    {t.type === 'income' && !!t.is_recurring && (
+                    {!t.is_cancelled && t.type === 'income' && !!t.is_recurring && (
                         <div className="px-1 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             {(t.remaining_recurrence !== null && (t.remaining_recurrence ?? 0) > 0) ? `RECORRENTE (${t.remaining_recurrence})` : 'RECORRENTE'}
                         </div>
                     )}
-                    {t.type === 'income' && !t.is_recurring && (
+                    {!t.is_cancelled && t.type === 'income' && !t.is_recurring && (
                         <div className="px-1 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[6px] font-black tracking-widest leading-none">
                             OCASIONAL
                         </div>
@@ -3317,7 +3334,7 @@ function TransactionItem({ t, onDelete, onClick, categories, sources, isDuplicat
             </div>
             <div className="text-right shrink-0 flex items-center gap-2">
                 <div>
-                    <p className={`text-xs font-black tracking-tighter ${t.type === 'income' ? 'text-emerald-400' : 'text-zinc-100'}`}>
+                    <p className={`text-xs font-black tracking-tighter ${t.is_cancelled ? 'line-through text-zinc-500' : t.type === 'income' ? 'text-emerald-400' : 'text-zinc-100'}`}>
                         {t.type === 'income' ? '+' : '-'}{formatCurrency(t.value).replace('R$', '').trim()}
                     </p>
                     <p className="text-[8px] text-zinc-600 font-black uppercase tracking-widest leading-none mt-0.5">{formatDate(t.date).split('/')[0]}/{formatDate(t.date).split('/')[1]}</p>
@@ -3517,6 +3534,8 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
         is_mandatory: transaction?.is_mandatory || false,
         is_recurring: transaction ? !!transaction.is_recurring : false,
         remaining_recurrence: transaction?.remaining_recurrence || "",
+        is_cancelled: transaction ? !!transaction.is_cancelled : false,
+        comment: transaction?.comment || "",
     });
 
     const isCardSource = sources.find((s: any) => s.id === formData.source_id)?.name === "CARTÃO";
@@ -3733,6 +3752,24 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                             </div>
                         )}
 
+                        {transaction && (
+                            <div className="space-y-1.5">
+                                <CustomSelect
+                                    label="Status da Transação"
+                                    disabled={isSubmitting}
+                                    value={formData.is_cancelled ? 'cancelled' : 'active'}
+                                    onChange={val => setFormData({
+                                        ...formData,
+                                        is_cancelled: val === 'cancelled'
+                                    })}
+                                    options={[
+                                        { value: 'active', label: 'ATIVA' },
+                                        { value: 'cancelled', label: 'CANCELADA' }
+                                    ]}
+                                />
+                            </div>
+                        )}
+
                         <div className="md:col-span-3 space-y-1.5 pt-2">
                             <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest text-center block mb-1.5">Valor</label>
                             <div className="relative">
@@ -3747,8 +3784,22 @@ function TransactionModal({ categories, sources, suppliers, cards, report, trans
                                     }}
                                     className="w-full bg-[#18181b] border border-zinc-800 rounded-2xl px-6 py-5 focus:outline-none font-black text-3xl text-center text-emerald-500 disabled:opacity-50 shadow-xl"
                                     autoFocus={!transaction}
+                                    id="transaction-modal-value"
                                 />
                             </div>
+                        </div>
+
+                        <div className="md:col-span-3 space-y-1.5 pt-2">
+                            <label className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest text-center block mb-1.5">Comentários (Opcional)</label>
+                            <textarea
+                                disabled={isSubmitting}
+                                value={formData.comment}
+                                onChange={e => setFormData({ ...formData, comment: e.target.value })}
+                                placeholder="Adicione observações ou anotações a esta transação..."
+                                className="w-full bg-[#18181b] border border-zinc-800 rounded-2xl px-4 py-3 focus:outline-none text-xs text-zinc-200 placeholder-zinc-700 min-h-[80px] resize-none focus:border-zinc-500 transition-colors font-sans"
+                                id="transaction-modal-comment"
+                            />
+                            <p className="text-[9px] text-zinc-600 text-center uppercase tracking-widest font-bold">Anotações são salvas apenas nesta transação e não se repetem em recorrências.</p>
                         </div>
                     </div>
                 </div>

@@ -76,7 +76,7 @@ export const FinancialProvider: React.FC<{
       priorReports.forEach(r => {
         if (!r.transactions) return;
         const recurringDiscretionary = r.transactions
-          .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
+          .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr && !t.is_cancelled)
           .reduce((sum, t) => sum + Number(t.value), 0);
 
         const startDate = getInitialDate(r.start_date);
@@ -117,9 +117,9 @@ export const FinancialProvider: React.FC<{
 
     finalizedReports.forEach(r => {
       if (!r.transactions) return;
-      const income = r.transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.value), 0);
-      const expense = r.transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.value), 0);
-      const mandatory = r.transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((sum, t) => sum + Number(t.value), 0);
+      const income = r.transactions.filter(t => t.type === 'income' && !t.is_cancelled).reduce((sum, t) => sum + Number(t.value), 0);
+      const expense = r.transactions.filter(t => t.type === 'expense' && !t.is_cancelled).reduce((sum, t) => sum + Number(t.value), 0);
+      const mandatory = r.transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory) && !t.is_cancelled).reduce((sum, t) => sum + Number(t.value), 0);
 
       const startDate = getInitialDate(r.start_date);
       const endDate = getFinalDate(r.end_date);
@@ -174,9 +174,9 @@ export const FinancialProvider: React.FC<{
     const now = getNow();
     const transactions = targetReport.transactions || [];
 
-    const allKnownIncome = transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.value), 0);
-    const allKnownExpenses = transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.value), 0);
-    const allMandatoryExpense = transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory)).reduce((acc, t) => acc + Number(t.value), 0);
+    const allKnownIncome = transactions.filter(t => t.type === 'income' && !t.is_cancelled).reduce((acc, t) => acc + Number(t.value), 0);
+    const allKnownExpenses = transactions.filter(t => t.type === 'expense' && !t.is_cancelled).reduce((acc, t) => acc + Number(t.value), 0);
+    const allMandatoryExpense = transactions.filter(t => t.type === 'expense' && (t.is_mandatory || t.is_non_recurring_mandatory) && !t.is_cancelled).reduce((acc, t) => acc + Number(t.value), 0);
 
     const startDate = getInitialDate((targetReport.start_date));
     const endDate = getFinalDate((targetReport.end_date));
@@ -193,7 +193,7 @@ export const FinancialProvider: React.FC<{
 
     // Average: (Total Discretionary Recurring in report) / (Days Passed)
     const totalDiscretionaryRecurring = transactions
-      .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr)
+      .filter(t => t.type === 'expense' && !t.is_mandatory && !t.is_non_recurring_mandatory && !!t.is_recurring && (t.remaining_recurrence === undefined || t.remaining_recurrence === null || String(t.remaining_recurrence).trim() === '') && t.date <= nowStr && !t.is_cancelled)
       .reduce((sum, t) => sum + Number(t.value), 0);
     const currentDailyAvg = daysPassed > 0 ? totalDiscretionaryRecurring / daysPassed : 0;
 

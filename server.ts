@@ -88,6 +88,8 @@ db.exec(`
     is_recurring INTEGER DEFAULT 0,
     remaining_recurrence INTEGER DEFAULT NULL,
     is_auto INTEGER DEFAULT 0,
+    is_cancelled INTEGER DEFAULT 0,
+    comment TEXT DEFAULT NULL,
     FOREIGN KEY (report_id) REFERENCES reports(id) ON DELETE CASCADE,
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
     FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE RESTRICT
@@ -248,6 +250,28 @@ try {
     console.log("is_auto already exists in transactions");
   } else {
     console.error("Migration error (transactions is_auto):", e.message);
+  }
+}
+
+try {
+  db.prepare("ALTER TABLE transactions ADD COLUMN is_cancelled INTEGER DEFAULT 0").run();
+  console.log("Successfully added is_cancelled to transactions");
+} catch (e: any) {
+  if (e.message.includes("duplicate column name")) {
+    console.log("is_cancelled already exists in transactions");
+  } else {
+    console.error("Migration error (transactions is_cancelled):", e.message);
+  }
+}
+
+try {
+  db.prepare("ALTER TABLE transactions ADD COLUMN comment TEXT DEFAULT NULL").run();
+  console.log("Successfully added comment to transactions");
+} catch (e: any) {
+  if (e.message.includes("duplicate column name")) {
+    console.log("comment already exists in transactions");
+  } else {
+    console.error("Migration error (transactions comment):", e.message);
   }
 }
 
@@ -575,9 +599,9 @@ async function startServer() {
       const history = reports.map(r => {
         const transactions = db.prepare("SELECT * FROM transactions WHERE report_id = ?").all(r.id) as any[];
 
-        const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.value, 0);
-        const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.value, 0);
-        const fixedExpenses = transactions.filter(t => t.type === 'expense' && t.is_mandatory === 1).reduce((sum, t) => sum + t.value, 0);
+        const totalIncome = transactions.filter(t => t.type === 'income' && t.is_cancelled !== 1).reduce((sum, t) => sum + t.value, 0);
+        const totalExpense = transactions.filter(t => t.type === 'expense' && t.is_cancelled !== 1).reduce((sum, t) => sum + t.value, 0);
+        const fixedExpenses = transactions.filter(t => t.type === 'expense' && t.is_mandatory === 1 && t.is_cancelled !== 1).reduce((sum, t) => sum + t.value, 0);
         const discretionaryExpenses = totalExpense - fixedExpenses;
         const realSurplus = totalIncome - totalExpense;
 
@@ -640,7 +664,7 @@ async function startServer() {
         const trans = db.prepare(`
           SELECT type, SUM(value) as total 
           FROM transactions 
-          WHERE report_id = ? 
+          WHERE report_id = ? AND is_cancelled = 0
           GROUP BY type
         `).all(r.id) as any[];
 
@@ -851,14 +875,14 @@ Responda APENAS com um JSON no formato:
   });
 
   app.post("/api/transactions", (req, res) => {
-    const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, propagate } = req.body;
+    const { report_id, value, type, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, propagate, is_cancelled, comment } = req.body;
     const id = uuidv4();
     let finalCatId = category_id;
     if (!finalCatId && categories && categories.length > 0) finalCatId = categories[0];
 
     const insert = db.transaction(() => {
-      db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, category_id, is_auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)")
-        .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, is_recurring ? 1 : 0, remaining_recurrence !== undefined ? remaining_recurrence : null, supplier_id, card_id || null, finalCatId);
+      db.prepare("INSERT INTO transactions (id, report_id, value, type, source_id, date, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, category_id, is_auto, is_cancelled, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)")
+        .run(id, report_id, value, type, source_id, date, is_mandatory ? 1 : 0, is_recurring ? 1 : 0, remaining_recurrence !== undefined ? remaining_recurrence : null, supplier_id, card_id || null, finalCatId, is_cancelled ? 1 : 0, comment || null);
     });
 
     try {
@@ -1363,7 +1387,7 @@ Retorne o JSON com os campos adicionais 'installments_count' (inteiro, padrão 1
   });
 
   app.put("/api/transactions/:id", (req, res) => {
-    const { value, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, propagate } = req.body;
+    const { value, source_id, date, categories, category_id, is_mandatory, is_recurring, remaining_recurrence, supplier_id, card_id, propagate, is_cancelled, comment } = req.body;
     let finalCatId = category_id;
     if (!finalCatId && categories && categories.length > 0) finalCatId = categories[0];
 
@@ -1372,9 +1396,9 @@ Retorne o JSON com os campos adicionais 'installments_count' (inteiro, padrão 1
     const update = db.transaction(() => {
       db.prepare(`
         UPDATE transactions 
-        SET value = ?, source_id = ?, date = ?, is_mandatory = ?, is_recurring = ?, remaining_recurrence = ?, supplier_id = ?, card_id = ?, category_id = ?
+        SET value = ?, source_id = ?, date = ?, is_mandatory = ?, is_recurring = ?, remaining_recurrence = ?, supplier_id = ?, card_id = ?, category_id = ?, is_cancelled = ?, comment = ?
         WHERE id = ?
-      `).run(value, source_id, date, is_mandatory ? 1 : 0, is_recurring ? 1 : 0, remaining_recurrence !== undefined ? remaining_recurrence : null, supplier_id, card_id || null, finalCatId, req.params.id);
+      `).run(value, source_id, date, is_mandatory ? 1 : 0, is_recurring ? 1 : 0, remaining_recurrence !== undefined ? remaining_recurrence : null, supplier_id, card_id || null, finalCatId, is_cancelled ? 1 : 0, comment || null, req.params.id);
     });
 
     try {

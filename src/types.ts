@@ -24,6 +24,7 @@ export interface Transaction {
   is_non_recurring_mandatory: boolean;
   is_recurring?: boolean;
   is_auto?: boolean | number;
+  is_cancelled?: boolean | number;
   remaining_recurrence?: number | null;
   category_id?: string;
   supplier_id?: string;
@@ -32,6 +33,7 @@ export interface Transaction {
   card_id?: string;
   card_name?: string;
   card_logo?: string;
+  comment?: string | null;
 }
 
 export interface Report {
