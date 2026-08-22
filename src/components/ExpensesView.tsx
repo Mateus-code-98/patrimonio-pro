@@ -69,22 +69,22 @@ export const ExpensesView = ({
     const [showFilterModal, setShowFilterModal] = useState(false);
 
     const availableCategories = useMemo(() => {
-        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.category_id));
+        const ids = new Set(transactions.filter(t => t.type === 'expense' && !t.is_cancelled).map(t => t.category_id));
         return categories.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name }));
     }, [transactions, categories]);
 
     const availableSources = useMemo(() => {
-        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.source_id));
+        const ids = new Set(transactions.filter(t => t.type === 'expense' && !t.is_cancelled).map(t => t.source_id));
         return sources.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name }));
     }, [transactions, sources]);
 
     const availableSuppliers = useMemo(() => {
-        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.supplier_id));
+        const ids = new Set(transactions.filter(t => t.type === 'expense' && !t.is_cancelled).map(t => t.supplier_id));
         return suppliers.filter(s => ids.has(s.id)).map(s => ({ value: s.id, label: s.name }));
     }, [transactions, suppliers]);
 
     const availableCards = useMemo(() => {
-        const ids = new Set(transactions.filter(t => t.type === 'expense').map(t => t.card_id));
+        const ids = new Set(transactions.filter(t => t.type === 'expense' && !t.is_cancelled).map(t => t.card_id));
         return cards.filter(c => ids.has(c.id)).map(c => ({ value: c.id, label: c.name }));
     }, [transactions, cards]);
 
@@ -149,6 +149,7 @@ export const ExpensesView = ({
 
     const filtered = useMemo(() => {
         return transactions.filter(t => {
+            if (t.is_cancelled) return false;
             if (filterCategory.length > 0 && !filterCategory.includes(t.category_id || "")) return false;
             if (filterSource.length > 0 && !filterSource.includes(t.source_id)) return false;
             if (filterSupplier.length > 0 && !filterSupplier.includes(t.supplier_id || "")) return false;
